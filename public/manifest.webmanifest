@@ -1,0 +1,19 @@
+{
+  "name": "Olivo POS",
+  "short_name": "Olivo POS",
+  "description": "Venta, recepción, inventario y caja de OLIVOMARKET",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0a0a0a",
+  "theme_color": "#0a0a0a",
+  "icons": [
+    {
+      "src": "/icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
