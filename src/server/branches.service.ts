@@ -1,0 +1,22 @@
+import { supabaseServer } from "@/lib/supabase-server";
+import type { Branch } from "@/types";
+
+export async function getBranches(): Promise<Branch[]> {
+  const { data, error } = await supabaseServer
+    .from("branches")
+    .select("*")
+    .eq("is_active", true)
+    .order("is_default", { ascending: false });
+  if (error) throw new Error(error.message);
+  return (data ?? []) as Branch[];
+}
+
+export async function getDefaultBranch(): Promise<Branch | null> {
+  const { data, error } = await supabaseServer
+    .from("branches")
+    .select("*")
+    .eq("is_default", true)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return (data as Branch) ?? null;
+}
