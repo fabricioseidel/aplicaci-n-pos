@@ -42,11 +42,14 @@ export const config = {
      * Todo salvo:
      *  - /login              (la propia pantalla de acceso)
      *  - /api/auth/**        (endpoints de NextAuth)
-     *  - assets de Next, favicon, manifest, iconos
+     *  - /_next/**          (assets, imágenes y también el canal de HMR de
+     *                        `next dev`, que si se redirige rompe el recargado
+     *                        en caliente al no haber sesión)
+     *  - favicon, manifest, iconos
      *  - sw.js / workers de Serwist (el SW se registra sin sesión; si el
      *    middleware lo redirigiera a /login, el navegador guardaría HTML como
      *    si fuera el service worker y la PWA quedaría rota)
      */
-    "/((?!login|api/auth|_next/static|_next/image|favicon.ico|manifest.webmanifest|icons/|sw.js|swe-worker-.*\\.js).*)",
+    "/((?!login|api/auth|_next/|favicon.ico|manifest.webmanifest|icons/|sw.js|swe-worker-.*\\.js).*)",
   ],
 };

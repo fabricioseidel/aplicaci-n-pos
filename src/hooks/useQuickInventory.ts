@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import { ProductUI } from "@/types";
 import { useBranch } from "@/contexts/BranchContext";
 import { useSync } from "@/contexts/SyncContext";
@@ -22,6 +22,16 @@ export function useQuickInventory() {
   const { refreshPending } = useSync();
 
   const [items, setItems] = useState<InventoryItem[]>([]);
+  /**
+   * Espejo de `items` para poder consultarlo sin meter la lectura dentro del
+   * updater de setState: en StrictMode React invoca el updater dos veces, y
+   * un efecto secundario ahí dentro sumaría la cantidad dos veces por escaneo.
+   */
+  const itemsRef = useRef<InventoryItem[]>([]);
+  useEffect(() => {
+    itemsRef.current = items;
+  }, [items]);
+
   const [isScanning, setIsScanning] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -33,18 +43,20 @@ export function useQuickInventory() {
     setSuccess(null);
 
     try {
-      let matched = false;
-      setItems((prev) => {
-        const idx = prev.findIndex(
-          (item) => item.product.barcode === barcode || item.product.id === barcode
+      const existing = itemsRef.current.find(
+        (item) => item.product.barcode === barcode || item.product.id === barcode
+      );
+      if (existing) {
+        const step = existing.product.byWeight ? 0.5 : 1;
+        setItems((prev) =>
+          prev.map((item) =>
+            item.product.barcode === barcode || item.product.id === barcode
+              ? { ...item, quantity: item.quantity + step }
+              : item
+          )
         );
-        if (idx === -1) return prev;
-        matched = true;
-        const next = [...prev];
-        next[idx] = { ...next[idx], quantity: next[idx].quantity + 1 };
-        return next;
-      });
-      if (matched) return true;
+        return true;
+      }
 
       // La búsqueda va contra el catálogo cacheado: recibir mercadería suele
       // pasar en la bodega, justo donde peor llega el wifi.

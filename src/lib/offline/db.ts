@@ -109,13 +109,33 @@ export async function enqueue(op: Omit<OutboxOp, "createdAt" | "status" | "attem
   return row;
 }
 
-/** Operaciones pendientes, más antiguas primero (FIFO). */
+/**
+ * Tras este número de intentos fallidos la operación deja de reintentarse
+ * sola, pero SIGUE en la cola y contando en el badge: si una venta no entró,
+ * alguien tiene que enterarse, no borrarla en silencio.
+ */
+export const MAX_ATTEMPTS = 10;
+
+/** Operaciones a reenviar, más antiguas primero (FIFO). */
 export async function pendingOps(): Promise<OutboxOp[]> {
   const db = getDb();
   const rows = await db.outbox.toArray();
   return rows
-    .filter((o) => o.status !== "syncing")
+    .filter((o) => o.status !== "syncing" && o.attempts < MAX_ATTEMPTS)
     .sort((a, b) => a.createdAt - b.createdAt);
+}
+
+/**
+ * Devuelve a "pending" lo que quedó marcado como "syncing".
+ *
+ * Si la pestaña se cerró (o el teléfono se bloqueó) a mitad de un envío, la
+ * operación queda colgada en "syncing" y `pendingOps` no la volvería a tomar
+ * nunca. Se llama al arrancar el proveedor de sincronización.
+ */
+export async function resetStuckOps(): Promise<void> {
+  const db = getDb();
+  const stuck = await db.outbox.where("status").equals("syncing").toArray();
+  await Promise.all(stuck.map((o) => db.outbox.update(o.id, { status: "pending" })));
 }
 
 export async function countPending(): Promise<number> {

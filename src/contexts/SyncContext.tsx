@@ -9,7 +9,14 @@ import React, {
   useState,
   ReactNode,
 } from "react";
-import { countPending, markDone, markFailed, markSyncing, pendingOps } from "@/lib/offline/db";
+import {
+  countPending,
+  markDone,
+  markFailed,
+  markSyncing,
+  pendingOps,
+  resetStuckOps,
+} from "@/lib/offline/db";
 
 const POLL_MS = 20_000;
 
@@ -56,7 +63,7 @@ export function SyncProvider({ children }: { children: ReactNode }) {
     drainingRef.current = true;
     setSyncing(true);
     try {
-      const ops = await pendingOps();
+      const ops = await pendingOps().catch(() => []);
       for (const op of ops) {
         try {
           await markSyncing(op.id);
@@ -74,16 +81,12 @@ export function SyncProvider({ children }: { children: ReactNode }) {
           const body = await res.json().catch(() => ({}));
 
           /**
-           * 4xx (salvo 408/429) es un rechazo definitivo: el servidor no va a
-           * cambiar de opinión reintentando. Se marca como fallida y se deja
-           * en la cola visible para que alguien la revise, en vez de borrarla
-           * en silencio — si una venta no entró, hay que saberlo.
+           * El servidor respondió que no. Se anota el error y se incrementa
+           * el contador; tras MAX_ATTEMPTS deja de reintentarse sola pero
+           * sigue en la cola y en el badge, para que alguien la revise en vez
+           * de borrarla en silencio — si una venta no entró, hay que saberlo.
            */
-          await markFailed(
-            op.id,
-            body?.error || `HTTP ${res.status}`,
-            op.attempts + 1
-          );
+          await markFailed(op.id, body?.error || `HTTP ${res.status}`, op.attempts + 1);
         } catch (err) {
           // Se cayó la red a mitad del drenaje: se deja pendiente para el
           // siguiente intento. Las ventas son idempotentes por clientSaleId,
@@ -105,8 +108,12 @@ export function SyncProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     setIsOnline(navigator.onLine);
-    void refreshPending();
-    void syncNow();
+    // Rescata lo que quedó a medio enviar si la pestaña se cerró en pleno
+    // drenaje, antes del primer intento.
+    void resetStuckOps()
+      .catch(() => {})
+      .then(() => refreshPending())
+      .then(() => syncNow());
 
     const handleOnline = () => {
       setIsOnline(true);

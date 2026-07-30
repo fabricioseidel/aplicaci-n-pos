@@ -26,7 +26,10 @@ export async function GET() {
     const { data, error } = await supabaseServer
       .from("products")
       .select(PRODUCT_COLUMNS)
-      .neq("is_active", false)
+      // `is_active IS NULL` cuenta como activo (registros antiguos). Un
+      // `.neq("is_active", false)` los dejaría fuera, porque en SQL
+      // `NULL != false` no es true.
+      .or("is_active.is.null,is_active.eq.true")
       .order("updated_at", { ascending: false })
       .limit(5000);
 
