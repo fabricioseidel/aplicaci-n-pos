@@ -55,6 +55,12 @@ export async function openShift(data: {
     .select("*")
     .single();
 
+  // 23503 = foreign_key_violation. El único FK que puede fallar acá viniendo
+  // de una sesión viva es user_id: el token trae un uuid que ya no está en
+  // `users`. Al cajero no le sirve ver el SQL crudo en el toast.
+  if (error?.code === "23503") {
+    throw new Error("Tu sesión quedó desactualizada. Cierra sesión y vuelve a entrar.");
+  }
   if (error) throw new Error(error.message);
   return shift as CashShift;
 }
