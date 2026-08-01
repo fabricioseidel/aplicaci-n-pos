@@ -88,6 +88,29 @@ no tienen deduplicación en la base — es una limitación conocida y asumida.
 Abrir y cerrar caja **no** se encolan: ambas necesitan la respuesta real del
 servidor (el `shiftId` y el cuadre).
 
+## Instalar en los celulares del local
+
+La app es una PWA: desde Chrome, "Agregar a pantalla de inicio" ya deja un
+ícono que abre en pantalla completa y funciona sin conexión.
+
+Para un **APK instalable** (sideload, sin Play Store) se empaqueta la misma URL
+como TWA — el APK no lleva código propio, sólo abre el sitio a pantalla
+completa, así que cada deploy actualiza la app sin reinstalar nada:
+
+1. En [pwabuilder.com](https://www.pwabuilder.com) se pega la URL de
+   producción y se genera el paquete Android. Guarda el `signing.keystore` y su
+   contraseña: sin esa misma llave, una actualización futura no se puede
+   instalar encima y hay que desinstalar primero.
+2. El paquete trae un `assetlinks.json`. Va en `public/.well-known/assetlinks.json`
+   de este repo y se despliega **antes** de instalar el APK: es lo que prueba
+   que el dominio y la app son del mismo dueño. Sin él el APK funciona igual,
+   pero muestra la barra de direcciones de Chrome arriba.
+3. En cada teléfono hay que permitir "Instalar apps de origen desconocido" para
+   el gestor de archivos que abra el `.apk`.
+
+Los íconos del manifest (`public/icons/`) se generan con el mismo diseño del
+`icon.svg`; el de 512 es el que Android usa para el lanzador.
+
 ## Base de datos
 
 Se usa el mismo proyecto Supabase que OlivoWeb. Este repo **no** define ni

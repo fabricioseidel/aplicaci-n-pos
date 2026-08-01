@@ -7,6 +7,13 @@ export const metadata: Metadata = {
   description: "Venta, recepción, inventario y caja de OLIVOMARKET",
   manifest: "/manifest.webmanifest",
   robots: { index: false, follow: false },
+  icons: {
+    icon: [
+      { url: "/icons/icon-192.png", sizes: "192x192", type: "image/png" },
+      { url: "/icons/icon.svg", type: "image/svg+xml" },
+    ],
+    apple: "/icons/icon-192.png",
+  },
   appleWebApp: { capable: true, title: "Olivo POS", statusBarStyle: "black-translucent" },
 };
 
