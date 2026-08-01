@@ -7,9 +7,13 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "android:sync": "cap sync android",
+    "android:open": "cap open android"
   },
   "dependencies": {
+    "@capacitor/android": "^8.5.0",
+    "@capacitor/core": "^8.5.0",
     "@heroicons/react": "^2.2.0",
     "@supabase/supabase-js": "^2.56.0",
     "bcryptjs": "^3.0.2",
@@ -22,6 +26,7 @@
     "zod": "^4.0.17"
   },
   "devDependencies": {
+    "@capacitor/cli": "^8.5.0",
     "@eslint/eslintrc": "^3",
     "@serwist/next": "^9.5.12",
     "@tailwindcss/postcss": "^4",

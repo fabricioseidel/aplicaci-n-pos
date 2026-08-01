@@ -93,23 +93,31 @@ servidor (el `shiftId` y el cuadre).
 La app es una PWA: desde Chrome, "Agregar a pantalla de inicio" ya deja un
 ícono que abre en pantalla completa y funciona sin conexión.
 
-Para un **APK instalable** (sideload, sin Play Store) se empaqueta la misma URL
-como TWA — el APK no lleva código propio, sólo abre el sitio a pantalla
-completa, así que cada deploy actualiza la app sin reinstalar nada:
+### APK
 
-1. En [pwabuilder.com](https://www.pwabuilder.com) se pega la URL de
-   producción y se genera el paquete Android. Guarda el `signing.keystore` y su
-   contraseña: sin esa misma llave, una actualización futura no se puede
-   instalar encima y hay que desinstalar primero.
-2. El paquete trae un `assetlinks.json`. Va en `public/.well-known/assetlinks.json`
-   de este repo y se despliega **antes** de instalar el APK: es lo que prueba
-   que el dominio y la app son del mismo dueño. Sin él el APK funciona igual,
-   pero muestra la barra de direcciones de Chrome arriba.
-3. En cada teléfono hay que permitir "Instalar apps de origen desconocido" para
-   el gestor de archivos que abra el `.apk`.
+`android/` es un cascarón Capacitor (`cl.olivomarket.pos`) que **no lleva build
+web propio**: carga en vivo la URL de `capacitor.config.ts`. Por eso cada deploy
+en Vercel actualiza la app de los teléfonos sin reinstalar nada — el APK sólo se
+rehace si cambia el ícono, el nombre o la URL.
 
-Los íconos del manifest (`public/icons/`) se generan con el mismo diseño del
-`icon.svg`; el de 512 es el que Android usa para el lanzador.
+El APK se compila en CI, no hace falta Android Studio: en GitHub → **Actions** →
+"Build Android APK (POS)" → *Run workflow*. Al terminar, el `.apk` queda como
+artifact del run. El workflow también corre solo cuando cambia `android/`,
+`www/` o `capacitor.config.ts` en `main`.
+
+Para instalarlo hay que permitir "Instalar apps de origen desconocido" en el
+gestor de archivos que abra el `.apk`.
+
+Ese artifact es un **debug APK**, firmado con la llave de debug: sirve para
+sideload en los teléfonos del local, no para Play Store. Publicar en Play pide
+un release firmado con una llave propia que hay que guardar (sin ella no se
+puede actualizar la app después).
+
+Si se toca `capacitor.config.ts`, corre `npm run android:sync` para que el
+proyecto nativo quede al día.
+
+Los íconos salen del mismo diseño del `icon.svg`: `public/icons/` para el
+manifest de la PWA y `android/app/src/main/res/mipmap-*/` para el lanzador.
 
 ## Base de datos
 
