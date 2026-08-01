@@ -60,10 +60,13 @@ export const authOptions: NextAuthOptions = {
         try {
           const existing = await getUserByEmail(email);
           if (existing) {
-            if (!token.uid) {
-              token.uid = existing.id;
-              token.sub = existing.id;
-            }
+            // El id se re-sincroniza siempre, no sólo cuando falta. Un token
+            // viejo puede traer un uid que ya no está en `users` (usuario
+            // recreado con otro uuid), y ese uid fantasma rompe todo insert
+            // con FK a users — abrir caja, entre otros — con la sesión
+            // pareciendo válida.
+            token.uid = existing.id;
+            token.sub = existing.id;
             token.role = existing.role || "USER";
           }
         } catch {
