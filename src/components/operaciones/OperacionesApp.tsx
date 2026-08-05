@@ -76,7 +76,10 @@ export default function OperacionesApp() {
   const ventaBloqueada = mode === "VENTA" && cajaAbierta === false && !cargandoCaja;
 
   return (
-    <div className="flex flex-col min-h-screen bg-[#0a0a0a] text-white">
+    // Altura exacta de la ventana (dvh, no vh: en el navegador del celular la
+    // barra de direcciones se esconde y vh miente). Así el único que scrollea
+    // es el contenido, y la barra de pestañas no se puede ir de pantalla.
+    <div className="flex flex-col h-dvh bg-[#0a0a0a] text-white">
       <div className="sticky top-0 z-30 bg-[#0a0a0a] border-b border-white/5">
         <div className="flex justify-end px-3 pt-2 h-7 items-center">
           <SyncBadge />
@@ -101,7 +104,7 @@ export default function OperacionesApp() {
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 min-h-0 overflow-y-auto">
         {mode === "VENTA" && ventaBloqueada && (
           <div className="max-w-md mx-auto px-6 py-16 text-center">
             <div className="mx-auto w-16 h-16 rounded-2xl bg-amber-500/10 text-amber-400 flex items-center justify-center mb-5">

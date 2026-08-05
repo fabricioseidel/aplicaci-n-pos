@@ -8,6 +8,7 @@ import { useSync } from "@/contexts/SyncContext";
 import { useProductCatalog } from "@/hooks/useProductCatalog";
 import { ProductUI } from "@/types";
 import { STAFF_DISCOUNT_RATE, type PosPaymentMethod } from "@/lib/pos/payments";
+import { searchProducts } from "@/lib/pos/search";
 import { apiWrite } from "@/lib/offline/apiWrite";
 import { newId } from "@/lib/offline/db";
 import UnifiedScanner from "@/components/scanner/UnifiedScanner";
@@ -92,12 +93,10 @@ export default function SaleMode({ shiftId }: SaleModeProps) {
     ? true
     : Math.abs(paymentSum - change - finalTotal) < 0.01 && paymentSum >= finalTotal;
 
-  const products = useMemo(() => {
-    const q = searchQuery.toLowerCase().trim();
-    return q
-      ? allProducts.filter((p) => p.name.toLowerCase().includes(q) || p.id.includes(q))
-      : allProducts;
-  }, [searchQuery, allProducts]);
+  const products = useMemo(
+    () => searchProducts(allProducts, searchQuery),
+    [searchQuery, allProducts]
+  );
   const visibleProducts = useMemo(() => products.slice(0, visibleCount), [products, visibleCount]);
 
   useEffect(() => { setVisibleCount(PRODUCTS_PER_PAGE); }, [searchQuery]);
@@ -226,10 +225,13 @@ export default function SaleMode({ shiftId }: SaleModeProps) {
   };
 
   return (
-    <div className="max-w-4xl mx-auto w-full">
-      {/* Vista de productos */}
-      <div className={view === "products" ? "block" : "hidden"}>
-        <div className="p-3 flex gap-2 items-center border-b border-white/5 sticky top-[53px] md:top-0 bg-[#0a0a0a] z-20">
+    <div className="max-w-4xl mx-auto w-full h-full">
+      {/* Vista de productos.
+          Columna flex con un único scroll (el grid): con dos contenedores
+          scrolleando a la vez, el de afuera se llevaba la primera fila debajo
+          del buscador. */}
+      <div className={view === "products" ? "flex flex-col h-full" : "hidden"}>
+        <div className="p-3 flex gap-2 items-center border-b border-white/5 shrink-0 bg-[#0a0a0a] z-20">
           <div className="relative flex-1">
             <MagnifyingGlassIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-white/40" />
             <input
@@ -272,15 +274,14 @@ export default function SaleMode({ shiftId }: SaleModeProps) {
         </div>
 
         {fromCache && (
-          <p className="px-3 py-1.5 text-[10px] font-black uppercase tracking-widest text-amber-400 bg-amber-500/10 border-b border-amber-500/20">
+          <p className="px-3 py-1.5 shrink-0 text-[10px] font-black uppercase tracking-widest text-amber-400 bg-amber-500/10 border-b border-amber-500/20">
             Catálogo sin conexión
           </p>
         )}
 
         <div
-          className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2 p-3 pb-24 content-start"
+          className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2 p-3 pb-24 content-start flex-1 min-h-0 overflow-y-auto"
           onScroll={handleScroll}
-          style={{ maxHeight: "calc(100vh - 10rem)", overflowY: "auto" }}
         >
           {loading && Array.from({ length: 12 }).map((_, i) => (
             <div key={i} className="aspect-square bg-white/5 rounded-xl animate-pulse" />
@@ -348,7 +349,7 @@ export default function SaleMode({ shiftId }: SaleModeProps) {
 
       {/* Vista de carrito / cobro */}
       <div className={view === "cart" ? "block" : "hidden"}>
-        <div className="p-3 flex items-center gap-3 border-b border-white/5 sticky top-[53px] md:top-0 bg-[#0a0a0a] z-20">
+        <div className="p-3 flex items-center gap-3 border-b border-white/5 sticky top-0 bg-[#0a0a0a] z-20">
           <button
             onClick={() => setView("products")}
             className="text-[10px] font-black uppercase tracking-widest text-white/50 hover:text-white"

@@ -10,6 +10,7 @@ import { useProductCatalog } from "@/hooks/useProductCatalog";
 import { saveProduct, DEFAULT_IMAGE } from "@/services/products";
 import UnifiedScanner from "@/components/scanner/UnifiedScanner";
 import type { ProductUI } from "@/types";
+import { searchProducts } from "@/lib/pos/search";
 
 const PAGE_SIZE = 40;
 
@@ -73,13 +74,7 @@ export default function ProductosMode() {
   const [saving, setSaving] = useState(false);
   const [scanning, setScanning] = useState(false);
 
-  const filtered = useMemo(() => {
-    const q = query.toLowerCase().trim();
-    if (!q) return products;
-    return products.filter(
-      (p) => p.name.toLowerCase().includes(q) || p.id.toLowerCase().includes(q)
-    );
-  }, [query, products]);
+  const filtered = useMemo(() => searchProducts(products, query), [query, products]);
 
   const startNew = () => {
     setEditing({ ...EMPTY_FORM, barcode: query.trim() });
@@ -430,7 +425,7 @@ export default function ProductosMode() {
   // ── Listado ───────────────────────────────────────────────────────────
   return (
     <div className="max-w-3xl mx-auto w-full">
-      <div className="p-3 flex gap-2 items-center border-b border-white/5 sticky top-[53px] md:top-0 bg-[#0a0a0a] z-20">
+      <div className="p-3 flex gap-2 items-center border-b border-white/5 sticky top-0 bg-[#0a0a0a] z-20">
         <div className="relative flex-1">
           <MagnifyingGlassIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-white/40" />
           <input
