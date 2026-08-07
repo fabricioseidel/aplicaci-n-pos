@@ -91,6 +91,24 @@ export function useQuickInventory() {
     }
   }, []);
 
+  /**
+   * Suma un producto ya resuelto (recién creado, o elegido de una sugerencia
+   * de fusión) sin pasar por la búsqueda por código de `addItem`: ya se tiene
+   * el objeto completo, así que no hay nada que resolver contra el catálogo.
+   */
+  const addProduct = useCallback((product: ProductUI, quantity: number) => {
+    setError(null);
+    setSuccess(null);
+    const key = product.barcode || product.id;
+    setItems((prev) => {
+      const idx = prev.findIndex((item) => (item.product.barcode || item.product.id) === key);
+      if (idx === -1) return [...prev, { product, quantity }];
+      const next = [...prev];
+      next[idx] = { ...next[idx], quantity: next[idx].quantity + quantity };
+      return next;
+    });
+  }, []);
+
   const updateQuantity = useCallback((barcode: string, quantity: number) => {
     if (quantity <= 0) {
       setItems((prev) =>
@@ -153,6 +171,7 @@ export function useQuickInventory() {
   return {
     items,
     addItem,
+    addProduct,
     updateQuantity,
     confirm,
     clear,

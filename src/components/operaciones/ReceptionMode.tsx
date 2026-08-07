@@ -1,31 +1,36 @@
 "use client";
 
-import React, { useMemo, useRef, useState } from "react";
+import React, { useCallback, useMemo, useRef, useState } from "react";
 import {
   TrashIcon, PlusIcon, MinusIcon, ArchiveBoxIcon,
   CheckCircleIcon, ExclamationCircleIcon, BoltIcon,
-  MagnifyingGlassIcon, XMarkIcon,
+  MagnifyingGlassIcon, XMarkIcon, PlusCircleIcon,
 } from "@heroicons/react/24/outline";
 import { useQuickInventory } from "@/hooks/useQuickInventory";
 import { useProductCatalog } from "@/hooks/useProductCatalog";
 import { searchProducts } from "@/lib/pos/search";
 import UnifiedScanner from "@/components/scanner/UnifiedScanner";
+import QuickCreateReceptionModal from "@/components/operaciones/QuickCreateReceptionModal";
+import type { ProductUI } from "@/types";
 
 const SEARCH_RESULTS_LIMIT = 8;
 
 /**
  * Recepción de mercadería: se escanea lo que llega (o se busca por nombre,
  * útil para el reconteo de stock sin código a mano), se ajustan cantidades y
- * se confirma como un único apply_reception.
+ * se confirma como un único apply_reception. Lo que no existe en el catálogo
+ * se puede crear al vuelo: con el código del escaneo, o desde cero cuando la
+ * búsqueda por nombre no encuentra nada.
  */
 export default function ReceptionMode() {
   const {
-    items, addItem, updateQuantity, confirm, clear,
+    items, addItem, addProduct, updateQuantity, confirm, clear,
     isScanning, isSaving, error, success, totalItems,
   } = useQuickInventory();
-  const { products: allProducts } = useProductCatalog();
+  const { products: allProducts, upsertLocal } = useProductCatalog();
 
   const [query, setQuery] = useState("");
+  const [creating, setCreating] = useState<{ barcode: string; name: string } | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
 
   const results = useMemo(
@@ -33,10 +38,35 @@ export default function ReceptionMode() {
     [query, allProducts]
   );
 
-  const addByName = (barcode: string) => {
-    addItem(barcode);
+  const addByName = (product: ProductUI) => {
+    addProduct(product, 1);
     setQuery("");
     searchRef.current?.focus();
+  };
+
+  // El escáner ya resuelve contra el catálogo; si no encuentra nada, en vez
+  // de sólo mostrar el error se ofrece crear el producto con ese código.
+  const handleScan = useCallback(
+    async (barcode: string) => {
+      const found = await addItem(barcode);
+      if (!found) setCreating({ barcode, name: "" });
+    },
+    [addItem]
+  );
+
+  const closeCreating = () => setCreating(null);
+
+  const handleCreated = (product: ProductUI, quantity: number) => {
+    upsertLocal(product);
+    addProduct(product, quantity);
+    closeCreating();
+    setQuery("");
+  };
+
+  const handleMerge = (product: ProductUI, quantity: number) => {
+    addProduct(product, quantity);
+    closeCreating();
+    setQuery("");
   };
 
   return (
@@ -74,7 +104,7 @@ export default function ReceptionMode() {
           </div>
         )}
 
-        {error && (
+        {error && !creating && (
           <div className="bg-red-500/10 border border-red-500/50 p-4 rounded-2xl flex items-center gap-4 shrink-0">
             <div className="p-2.5 bg-red-500 rounded-2xl text-white shrink-0">
               <ExclamationCircleIcon className="w-6 h-6" />
@@ -113,7 +143,7 @@ export default function ReceptionMode() {
               {results.map((p) => (
                 <li key={p.id}>
                   <button
-                    onClick={() => addByName(p.barcode || p.id)}
+                    onClick={() => addByName(p)}
                     className="w-full flex items-center gap-3 text-left bg-white/5 hover:bg-white/10 rounded-xl p-3 border border-white/10 transition-colors"
                   >
                     <div className="w-10 h-10 bg-white/5 rounded-xl flex items-center justify-center overflow-hidden shrink-0 border border-white/10">
@@ -134,13 +164,21 @@ export default function ReceptionMode() {
                 </li>
               ))}
               {results.length === 0 && (
-                <li className="text-xs text-white/30 text-center py-3">Sin coincidencias.</li>
+                <li className="py-3 text-center">
+                  <p className="text-xs text-white/30 mb-2">Sin coincidencias.</p>
+                  <button
+                    onClick={() => setCreating({ barcode: "", name: query.trim() })}
+                    className="inline-flex items-center gap-1.5 px-4 py-2 bg-emerald-500/10 border border-emerald-500/30 rounded-xl text-emerald-400 text-[10px] font-black uppercase tracking-widest"
+                  >
+                    <PlusCircleIcon className="h-4 w-4" /> Crear &quot;{query.trim()}&quot;
+                  </button>
+                </li>
               )}
             </ul>
           )}
         </div>
 
-        <UnifiedScanner onDetected={addItem} isProcessing={isScanning} />
+        <UnifiedScanner onDetected={handleScan} isProcessing={isScanning} />
 
         <div className="flex-1 flex flex-col space-y-3">
           <div className="flex justify-between items-center px-1 shrink-0">
@@ -249,6 +287,17 @@ export default function ReceptionMode() {
           </button>
         </div>
       </div>
+
+      {creating && (
+        <QuickCreateReceptionModal
+          initialBarcode={creating.barcode}
+          initialName={creating.name}
+          products={allProducts}
+          onClose={closeCreating}
+          onCreated={handleCreated}
+          onMerge={handleMerge}
+        />
+      )}
     </div>
   );
 }
