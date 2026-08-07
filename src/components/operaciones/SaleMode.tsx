@@ -290,13 +290,8 @@ export default function SaleMode({ shiftId }: SaleModeProps) {
           {!loading && visibleProducts.map((p) => (
             <button
               key={p.id}
-              disabled={p.stock <= 0}
               onClick={() => pickProduct(p)}
-              className={`bg-white/5 rounded-xl p-2 border text-left transition-all active:scale-95 flex flex-col ${
-                p.stock <= 0
-                  ? "opacity-40 cursor-not-allowed border-white/5"
-                  : "border-white/10 hover:border-emerald-500"
-              }`}
+              className="bg-white/5 rounded-xl p-2 border text-left transition-all active:scale-95 flex flex-col border-white/10 hover:border-emerald-500"
             >
               <div className="relative aspect-square rounded-lg overflow-hidden mb-1 bg-white/5">
                 {/* eslint-disable-next-line @next/next/no-img-element -- imagen externa sin dimensiones conocidas */}
@@ -306,10 +301,12 @@ export default function SaleMode({ shiftId }: SaleModeProps) {
                     <ScaleIcon className="h-2.5 w-2.5" /> kg
                   </span>
                 )}
+                {/* Venta provisional sin stock habilitada: se avisa pero no se
+                    bloquea el click mientras se está recontando inventario. */}
                 {p.stock <= 0 && (
-                  <div className="absolute inset-0 bg-black/70 flex items-center justify-center">
-                    <span className="text-[8px] font-black text-red-400 uppercase">Sin stock</span>
-                  </div>
+                  <span className="absolute top-1 right-1 rounded-md bg-black/70 px-1 py-0.5 text-[7px] font-black uppercase text-amber-400">
+                    Sin stock
+                  </span>
                 )}
               </div>
               <p className="text-[10px] font-bold truncate text-white/80">{p.name}</p>
