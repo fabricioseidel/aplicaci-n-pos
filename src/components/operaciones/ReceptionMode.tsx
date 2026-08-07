@@ -1,15 +1,21 @@
 "use client";
 
-import React from "react";
+import React, { useMemo, useRef, useState } from "react";
 import {
   TrashIcon, PlusIcon, MinusIcon, ArchiveBoxIcon,
   CheckCircleIcon, ExclamationCircleIcon, BoltIcon,
+  MagnifyingGlassIcon, XMarkIcon,
 } from "@heroicons/react/24/outline";
 import { useQuickInventory } from "@/hooks/useQuickInventory";
+import { useProductCatalog } from "@/hooks/useProductCatalog";
+import { searchProducts } from "@/lib/pos/search";
 import UnifiedScanner from "@/components/scanner/UnifiedScanner";
 
+const SEARCH_RESULTS_LIMIT = 8;
+
 /**
- * Recepción de mercadería: se escanea lo que llega, se ajustan cantidades y
+ * Recepción de mercadería: se escanea lo que llega (o se busca por nombre,
+ * útil para el reconteo de stock sin código a mano), se ajustan cantidades y
  * se confirma como un único apply_reception.
  */
 export default function ReceptionMode() {
@@ -17,6 +23,21 @@ export default function ReceptionMode() {
     items, addItem, updateQuantity, confirm, clear,
     isScanning, isSaving, error, success, totalItems,
   } = useQuickInventory();
+  const { products: allProducts } = useProductCatalog();
+
+  const [query, setQuery] = useState("");
+  const searchRef = useRef<HTMLInputElement>(null);
+
+  const results = useMemo(
+    () => (query.trim() ? searchProducts(allProducts, query).slice(0, SEARCH_RESULTS_LIMIT) : []),
+    [query, allProducts]
+  );
+
+  const addByName = (barcode: string) => {
+    addItem(barcode);
+    setQuery("");
+    searchRef.current?.focus();
+  };
 
   return (
     <div className="flex flex-col bg-[#0a0a0a] text-white relative">
@@ -64,6 +85,60 @@ export default function ReceptionMode() {
             </div>
           </div>
         )}
+
+        <div className="space-y-2 shrink-0">
+          <div className="relative">
+            <MagnifyingGlassIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-white/40" />
+            <input
+              ref={searchRef}
+              type="text"
+              placeholder="Buscar producto por nombre…"
+              className="w-full bg-white/5 border border-white/10 rounded-xl py-2.5 pl-9 pr-9 text-white text-sm outline-none focus:border-emerald-500"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+            {query && (
+              <button
+                onClick={() => setQuery("")}
+                aria-label="Limpiar búsqueda"
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-white/40 hover:text-white p-1"
+              >
+                <XMarkIcon className="h-4 w-4" />
+              </button>
+            )}
+          </div>
+
+          {query.trim() && (
+            <ul className="space-y-1.5 max-h-64 overflow-y-auto">
+              {results.map((p) => (
+                <li key={p.id}>
+                  <button
+                    onClick={() => addByName(p.barcode || p.id)}
+                    className="w-full flex items-center gap-3 text-left bg-white/5 hover:bg-white/10 rounded-xl p-3 border border-white/10 transition-colors"
+                  >
+                    <div className="w-10 h-10 bg-white/5 rounded-xl flex items-center justify-center overflow-hidden shrink-0 border border-white/10">
+                      {p.image ? (
+                        // eslint-disable-next-line @next/next/no-img-element -- imagen externa sin dimensiones conocidas
+                        <img src={p.image} alt="" className="w-full h-full object-cover" />
+                      ) : (
+                        <ArchiveBoxIcon className="w-5 h-5 text-white/20" />
+                      )}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-bold text-white truncate">{p.name}</p>
+                      <p className="text-[10px] text-white/40 font-mono mt-0.5">
+                        {p.barcode || p.id} · stock {p.stock}
+                      </p>
+                    </div>
+                  </button>
+                </li>
+              ))}
+              {results.length === 0 && (
+                <li className="text-xs text-white/30 text-center py-3">Sin coincidencias.</li>
+              )}
+            </ul>
+          )}
+        </div>
 
         <UnifiedScanner onDetected={addItem} isProcessing={isScanning} />
 
