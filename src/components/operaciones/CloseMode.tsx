@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useCallback } from "react";
 import { useToast } from "@/contexts/ToastContext";
+import { useBranch } from "@/contexts/BranchContext";
 import type { CashShift, ShiftMethodBreakdown } from "@/server/shifts.service";
 import {
   LockClosedIcon, ArrowPathIcon, BanknotesIcon, CreditCardIcon, UserIcon,
@@ -35,6 +36,7 @@ interface ShiftSaleRow {
 
 export default function CloseMode({ onShiftChange }: { onShiftChange?: () => void } = {}) {
   const { showToast } = useToast();
+  const { currentBranch } = useBranch();
   const [shift, setShift] = useState<CashShift | null>(null);
   const [loading, setLoading] = useState(true);
   const [closing, setClosing] = useState(false);
@@ -46,7 +48,12 @@ export default function CloseMode({ onShiftChange }: { onShiftChange?: () => voi
   const fetchShift = useCallback(async () => {
     setLoading(true);
     try {
-      const shiftRes = await fetch("/api/caja/shifts", { cache: "no-store" });
+      // El turno a cerrar es el de la sucursal activa: cada una cierra su
+      // propia caja, no importa qué otra tenga un turno abierto en paralelo.
+      const shiftUrl = currentBranch?.id
+        ? `/api/caja/shifts?branchId=${encodeURIComponent(currentBranch.id)}`
+        : "/api/caja/shifts";
+      const shiftRes = await fetch(shiftUrl, { cache: "no-store" });
       if (!shiftRes.ok) throw new Error(String(shiftRes.status));
       const { shift: s } = (await shiftRes.json()) as { shift: CashShift | null };
       setShift(s);
@@ -57,7 +64,8 @@ export default function CloseMode({ onShiftChange }: { onShiftChange?: () => voi
       const data = await res.json();
 
       const sales: ShiftSaleRow[] = data.sales || [];
-      const movements: Array<{ amount: number; type: "IN" | "OUT" }> = data.movements || [];
+      const movements: Array<{ amount: number; type: "IN" | "OUT"; method?: Method }> =
+        data.movements || [];
 
       const byMethod: Partial<Record<Method, number>> = {};
       sales.forEach((sale) => {
@@ -78,10 +86,15 @@ export default function CloseMode({ onShiftChange }: { onShiftChange?: () => voi
         }
       });
 
-      // El efectivo esperado incluye el fondo inicial y los movimientos.
-      const cashIn = movements.filter((m) => m.type === "IN").reduce((a, m) => a + Number(m.amount), 0);
-      const cashOut = movements.filter((m) => m.type === "OUT").reduce((a, m) => a + Number(m.amount), 0);
-      byMethod.CASH = (byMethod.CASH || 0) + Number(s.starting_cash) + cashIn - cashOut;
+      // Cada movimiento manual (ingreso/egreso) suma o resta del método en
+      // que realmente se movió el dinero, no siempre efectivo.
+      movements.forEach((m) => {
+        const method = m.method ?? "CASH";
+        const delta = m.type === "IN" ? Number(m.amount) : -Number(m.amount);
+        byMethod[method] = (byMethod[method] || 0) + delta;
+      });
+      // Sólo el efectivo arrastra el fondo inicial del turno.
+      byMethod.CASH = (byMethod.CASH || 0) + Number(s.starting_cash);
 
       setExpected(byMethod);
     } catch (e) {
@@ -89,7 +102,7 @@ export default function CloseMode({ onShiftChange }: { onShiftChange?: () => voi
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [currentBranch?.id]);
 
   useEffect(() => { void fetchShift(); }, [fetchShift]);
 

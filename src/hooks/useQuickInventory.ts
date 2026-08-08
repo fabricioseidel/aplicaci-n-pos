@@ -12,12 +12,17 @@ export interface InventoryItem {
   quantity: number;
 }
 
+export type QuickInventoryMode = "reception" | "transfer";
+
 /**
- * Cola de ítems escaneados que se confirma como una recepción real:
- * inserta inventory_movements (IN) e incrementa branch_stock vía el RPC
- * apply_reception.
+ * Cola de ítems escaneados que se confirma como un movimiento de stock real:
+ *
+ * - modo "reception" (casa matriz): entra mercadería de un proveedor externo,
+ *   vía `apply_reception` — suma stock de la nada.
+ * - modo "transfer" (sucursal): la mercadería sale de la casa matriz, vía
+ *   `apply_transfer` — resta allá y suma acá, no aparece stock nuevo.
  */
-export function useQuickInventory() {
+export function useQuickInventory(mode: QuickInventoryMode = "reception") {
   const { currentBranch } = useBranch();
   const { refreshPending } = useSync();
 
@@ -134,29 +139,50 @@ export function useQuickInventory() {
     setIsSaving(true);
     setError(null);
 
+    const isTransfer = mode === "transfer";
+    const successVerb = isTransfer ? "Traspaso registrado" : "Recepción registrada";
+    const queuedMsg = isTransfer
+      ? "Traspaso guardado sin conexión — se sincronizará"
+      : "Recepción guardada sin conexión — se sincronizará";
+
     try {
-      const res = await apiWrite<{ count: number }>({
-        kind: "reception",
-        url: "/api/reception",
-        payload: {
-          items: items.map((i) => ({
-            barcode: i.product.barcode || i.product.id,
-            // Decimal si el producto se vende por kilo.
-            qty: i.quantity,
-            name: i.product.name,
-          })),
-          branchId: currentBranch?.id ?? null,
-          notes: "RECEPTION",
-        },
-      });
+      const res = await apiWrite<{ count: number }>(
+        isTransfer
+          ? {
+              kind: "transfer",
+              url: "/api/transfers",
+              payload: {
+                items: items.map((i) => ({
+                  barcode: i.product.barcode || i.product.id,
+                  qty: i.quantity,
+                })),
+                toBranchId: currentBranch?.id ?? null,
+                notes: "TRANSFER",
+              },
+            }
+          : {
+              kind: "reception",
+              url: "/api/reception",
+              payload: {
+                items: items.map((i) => ({
+                  barcode: i.product.barcode || i.product.id,
+                  // Decimal si el producto se vende por kilo.
+                  qty: i.quantity,
+                  name: i.product.name,
+                })),
+                branchId: currentBranch?.id ?? null,
+                notes: "RECEPTION",
+              },
+            }
+      );
 
       if (res.ok && res.queued) {
-        setSuccess("Recepción guardada sin conexión — se sincronizará");
+        setSuccess(queuedMsg);
         await refreshPending();
         setItems([]);
       } else if (res.ok) {
         const count = res.data?.count ?? items.length;
-        setSuccess(`Recepción registrada: ${count} producto${count === 1 ? "" : "s"}`);
+        setSuccess(`${successVerb}: ${count} producto${count === 1 ? "" : "s"}`);
         setItems([]);
       } else {
         setError(res.error);
@@ -166,7 +192,7 @@ export function useQuickInventory() {
     } finally {
       setIsSaving(false);
     }
-  }, [items, currentBranch?.id, refreshPending]);
+  }, [items, currentBranch?.id, refreshPending, mode]);
 
   return {
     items,

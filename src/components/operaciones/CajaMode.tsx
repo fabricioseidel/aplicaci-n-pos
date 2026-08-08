@@ -11,10 +11,17 @@ import {
   PlusCircleIcon, ArrowPathIcon,
 } from "@heroicons/react/24/outline";
 
+type MovementMethod = "CASH" | "CARD" | "TRANSFER" | "OTHER";
+
+const MOVEMENT_METHOD_LABEL: Record<MovementMethod, string> = {
+  CASH: "Efectivo", CARD: "Tarjeta", TRANSFER: "Transferencia", OTHER: "Otro",
+};
+
 interface CashMovement {
   id: string;
   amount: number;
   type: "IN" | "OUT";
+  method?: MovementMethod;
   reason: string;
   created_at: string;
 }
@@ -35,6 +42,7 @@ export default function CajaMode({ onShiftChange }: { onShiftChange?: () => void
   const [opening, setOpening] = useState(false);
   const [startingCash, setStartingCash] = useState(10000);
   const [movementAmount, setMovementAmount] = useState(0);
+  const [movementMethod, setMovementMethod] = useState<MovementMethod>("CASH");
   const [movementReason, setMovementReason] = useState("");
   const [movements, setMovements] = useState<CashMovement[]>([]);
   const [shiftSales, setShiftSales] = useState<ShiftSale[]>([]);
@@ -42,7 +50,10 @@ export default function CajaMode({ onShiftChange }: { onShiftChange?: () => void
   const fetchShift = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch("/api/caja/shifts", { cache: "no-store" });
+      const url = currentBranch?.id
+        ? `/api/caja/shifts?branchId=${encodeURIComponent(currentBranch.id)}`
+        : "/api/caja/shifts";
+      const res = await fetch(url, { cache: "no-store" });
       if (!res.ok) throw new Error(String(res.status));
       const data = (await res.json()) as { shift: CashShift | null };
       setShift(data.shift);
@@ -51,7 +62,7 @@ export default function CajaMode({ onShiftChange }: { onShiftChange?: () => void
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [currentBranch?.id]);
 
   const fetchShiftData = useCallback(async (shiftId: string) => {
     try {
@@ -65,6 +76,7 @@ export default function CajaMode({ onShiftChange }: { onShiftChange?: () => void
     }
   }, []);
 
+  // Cambiar de sucursal es cambiar de caja: se vuelve a consultar el turno.
   useEffect(() => { void fetchShift(); }, [fetchShift]);
   useEffect(() => {
     if (shift?.id) void fetchShiftData(shift.id);
@@ -73,8 +85,11 @@ export default function CajaMode({ onShiftChange }: { onShiftChange?: () => void
   const totalCashSales = shiftSales
     .filter((s) => /cash|efectivo/i.test(s.payment_method))
     .reduce((a, s) => a + Number(s.total), 0);
-  const totalIn = movements.filter((m) => m.type === "IN").reduce((a, m) => a + Number(m.amount), 0);
-  const totalOut = movements.filter((m) => m.type === "OUT").reduce((a, m) => a + Number(m.amount), 0);
+  // El "esperado en caja" es sólo efectivo físico: un movimiento con otro
+  // método (tarjeta, transferencia) no suma ni resta billetes en el cajón.
+  const cashMovements = movements.filter((m) => (m.method ?? "CASH") === "CASH");
+  const totalIn = cashMovements.filter((m) => m.type === "IN").reduce((a, m) => a + Number(m.amount), 0);
+  const totalOut = cashMovements.filter((m) => m.type === "OUT").reduce((a, m) => a + Number(m.amount), 0);
   const expectedCash =
     (shift ? Number(shift.starting_cash) : 0) + totalCashSales + totalIn - totalOut;
   const totalAllSales = shiftSales.reduce((a, s) => a + Number(s.total), 0);
@@ -119,6 +134,7 @@ export default function CajaMode({ onShiftChange }: { onShiftChange?: () => void
         shiftId: shift.id,
         amount: movementAmount,
         type,
+        method: movementMethod,
         reason: movementReason || `${type === "IN" ? "Ingreso" : "Egreso"} manual`,
       },
     });
@@ -227,16 +243,28 @@ export default function CajaMode({ onShiftChange }: { onShiftChange?: () => void
         <p className="text-[10px] font-black uppercase tracking-widest text-white/50">
           Ingreso / Egreso Manual
         </p>
-        <input
-          type="number"
-          inputMode="numeric"
-          placeholder="Monto $"
-          aria-label="Monto del movimiento"
-          data-laser-passthrough
-          value={movementAmount || ""}
-          onChange={(e) => setMovementAmount(Number(e.target.value))}
-          className="w-full bg-black border border-white/10 rounded-xl p-3 font-black text-white outline-none focus:border-emerald-500"
-        />
+        <div className="flex gap-2">
+          <input
+            type="number"
+            inputMode="numeric"
+            placeholder="Monto $"
+            aria-label="Monto del movimiento"
+            data-laser-passthrough
+            value={movementAmount || ""}
+            onChange={(e) => setMovementAmount(Number(e.target.value))}
+            className="flex-1 bg-black border border-white/10 rounded-xl p-3 font-black text-white outline-none focus:border-emerald-500"
+          />
+          <select
+            value={movementMethod}
+            onChange={(e) => setMovementMethod(e.target.value as MovementMethod)}
+            aria-label="Método del movimiento"
+            className="bg-black border border-white/10 rounded-xl px-2 text-[10px] font-black uppercase tracking-widest text-white outline-none focus:border-emerald-500 shrink-0"
+          >
+            {(Object.keys(MOVEMENT_METHOD_LABEL) as MovementMethod[]).map((m) => (
+              <option key={m} value={m}>{MOVEMENT_METHOD_LABEL[m]}</option>
+            ))}
+          </select>
+        </div>
         <input
           type="text"
           placeholder="Motivo (opcional)"
@@ -277,6 +305,9 @@ export default function CajaMode({ onShiftChange }: { onShiftChange?: () => void
               >
                 <span className="text-white/70 truncate mr-2">
                   {m.reason || (m.type === "IN" ? "Ingreso" : "Egreso")}
+                  <span className="text-white/30 text-[9px] uppercase tracking-widest ml-1.5">
+                    · {MOVEMENT_METHOD_LABEL[m.method ?? "CASH"]}
+                  </span>
                 </span>
                 <span className={`font-black shrink-0 ${m.type === "IN" ? "text-emerald-400" : "text-red-400"}`}>
                   {m.type === "IN" ? "+" : "-"}$ {Number(m.amount).toLocaleString()}

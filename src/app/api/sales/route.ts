@@ -80,13 +80,17 @@ export async function POST(req: Request) {
     }
 
     if (!shiftId) {
-      const { data: shift } = await supabaseServer
+      // Cada sucursal tiene su propia caja: el turno vigente es el de la
+      // sucursal donde se hizo la venta, no "el último abierto" a secas
+      // (con dos sucursales operando a la vez eso mezclaría el arqueo).
+      let query = supabaseServer
         .from("cash_shifts")
         .select("id")
         .eq("status", "OPEN")
         .order("started_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
+        .limit(1);
+      if (body.branchId) query = query.eq("branch_id", body.branchId);
+      const { data: shift } = await query.maybeSingle();
       shiftId = shift?.id ?? null;
     }
 

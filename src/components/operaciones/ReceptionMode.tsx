@@ -8,6 +8,7 @@ import {
 } from "@heroicons/react/24/outline";
 import { useQuickInventory } from "@/hooks/useQuickInventory";
 import { useProductCatalog } from "@/hooks/useProductCatalog";
+import { useBranch } from "@/contexts/BranchContext";
 import { searchProducts } from "@/lib/pos/search";
 import UnifiedScanner from "@/components/scanner/UnifiedScanner";
 import QuickCreateReceptionModal from "@/components/operaciones/QuickCreateReceptionModal";
@@ -16,17 +17,23 @@ import type { ProductUI } from "@/types";
 const SEARCH_RESULTS_LIMIT = 8;
 
 /**
- * Recepción de mercadería: se escanea lo que llega (o se busca por nombre,
- * útil para el reconteo de stock sin código a mano), se ajustan cantidades y
- * se confirma como un único apply_reception. Lo que no existe en el catálogo
- * se puede crear al vuelo: con el código del escaneo, o desde cero cuando la
- * búsqueda por nombre no encuentra nada.
+ * Suma stock a un producto: en la casa matriz es Recepción de un proveedor
+ * externo (apply_reception, entra stock nuevo); en una sucursal es Traspaso
+ * desde la matriz (apply_transfer, resta allá y suma acá — la matriz sigue
+ * siendo la única que compra afuera). El escaneo/búsqueda y la lista son
+ * iguales en los dos modos, sólo cambia contra qué RPC confirma.
+ *
+ * Lo que no existe en el catálogo se puede crear al vuelo: con el código del
+ * escaneo, o desde cero cuando la búsqueda por nombre no encuentra nada.
  */
 export default function ReceptionMode() {
+  const { currentBranch } = useBranch();
+  const isTransfer = Boolean(currentBranch && !currentBranch.is_default);
+
   const {
     items, addItem, addProduct, updateQuantity, confirm, clear,
     isScanning, isSaving, error, success, totalItems,
-  } = useQuickInventory();
+  } = useQuickInventory(isTransfer ? "transfer" : "reception");
   const { products: allProducts, upsertLocal } = useProductCatalog();
 
   const [query, setQuery] = useState("");
@@ -76,10 +83,12 @@ export default function ReceptionMode() {
         <div className="flex justify-between items-start relative z-10 max-w-3xl mx-auto w-full">
           <div>
             <h1 className="text-2xl sm:text-3xl font-black tracking-tight mb-1 uppercase italic">
-              Recepción
+              {isTransfer ? "Traspaso" : "Recepción"}
             </h1>
             <p className="text-sm text-white/40 font-medium italic">
-              Suma stock de los nuevos ingresos.
+              {isTransfer
+                ? `Resta stock de la matriz y suma en ${currentBranch?.name ?? "esta sucursal"}.`
+                : "Suma stock de los nuevos ingresos."}
             </p>
           </div>
           <div className="text-right">
@@ -183,7 +192,7 @@ export default function ReceptionMode() {
         <div className="flex-1 flex flex-col space-y-3">
           <div className="flex justify-between items-center px-1 shrink-0">
             <h2 className="text-[10px] font-black uppercase tracking-[0.3em] text-white/30 italic">
-              Lista de recepción
+              {isTransfer ? "Lista de traspaso" : "Lista de recepción"}
             </h2>
             {items.length > 0 && (
               <button
@@ -282,7 +291,7 @@ export default function ReceptionMode() {
             {isSaving ? (
               <div className="w-6 h-6 border-2 border-current border-t-transparent rounded-full animate-spin" />
             ) : (
-              <><ArchiveBoxIcon className="w-5 h-5" /> Confirmar Recepción</>
+              <><ArchiveBoxIcon className="w-5 h-5" /> {isTransfer ? "Confirmar Traspaso" : "Confirmar Recepción"}</>
             )}
           </button>
         </div>
