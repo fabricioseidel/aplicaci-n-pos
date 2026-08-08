@@ -5,9 +5,16 @@ import { addCashMovement } from "@/server/shifts.service";
 
 export const dynamic = "force-dynamic";
 
+const VALID_METHODS = ["CASH", "CARD", "TRANSFER", "OTHER"] as const;
+type ManualMovementMethod = (typeof VALID_METHODS)[number];
+
 /**
- * POST /api/caja/movements — ingreso/egreso manual de efectivo.
- * Body: { shiftId, amount, type: 'IN'|'OUT', reason }
+ * POST /api/caja/movements — ingreso/egreso manual de dinero.
+ * Body: { shiftId, amount, type: 'IN'|'OUT', reason, method }
+ *
+ * `method` deja anotar el movimiento en el medio real en que se movió el
+ * dinero (efectivo, tarjeta, transferencia, otro) — antes todo movimiento
+ * manual se contaba como efectivo aunque en realidad no lo fuera.
  */
 export async function POST(req: Request) {
   const auth = await requireApiAdminOrSeller();
@@ -19,6 +26,7 @@ export async function POST(req: Request) {
       amount?: number;
       type?: "IN" | "OUT";
       reason?: string;
+      method?: string;
     };
 
     const amount = Number(body.amount);
@@ -32,11 +40,17 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Tipo inválido (IN u OUT)" }, { status: 400 });
     }
 
+    const method = (body.method?.toUpperCase() ?? "CASH") as ManualMovementMethod;
+    if (!VALID_METHODS.includes(method)) {
+      return NextResponse.json({ error: "Método inválido" }, { status: 400 });
+    }
+
     await addCashMovement({
       shift_id: body.shiftId,
       amount,
       type: body.type,
       reason: body.reason || (body.type === "IN" ? "Ingreso manual" : "Egreso manual"),
+      method,
     });
 
     return NextResponse.json({ ok: true });

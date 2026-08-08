@@ -13,6 +13,7 @@ import {
 } from "@heroicons/react/24/outline";
 import { POSProvider } from "@/contexts/POSContext";
 import { useSync } from "@/contexts/SyncContext";
+import { useBranch } from "@/contexts/BranchContext";
 import { useOpenShift } from "@/hooks/useOpenShift";
 import SaleMode from "@/components/operaciones/SaleMode";
 import ReceptionMode from "@/components/operaciones/ReceptionMode";
@@ -20,6 +21,7 @@ import CajaMode from "@/components/operaciones/CajaMode";
 import CloseMode from "@/components/operaciones/CloseMode";
 import InventarioMode from "@/components/operaciones/InventarioMode";
 import ProductosMode from "@/components/operaciones/ProductosMode";
+import BranchSwitcher from "@/components/operaciones/BranchSwitcher";
 
 type OperationsMode = "VENTA" | "RECEPCION" | "INVENTARIO" | "CAJA" | "CIERRE" | "PRODUCTOS";
 
@@ -68,7 +70,13 @@ function SyncBadge() {
 
 export default function OperacionesApp() {
   const [mode, setMode] = useState<OperationsMode>("VENTA");
-  const { open: cajaAbierta, shiftId, loading: cargandoCaja, refresh: refrescarCaja } = useOpenShift();
+  const { currentBranch } = useBranch();
+  const {
+    open: cajaAbierta,
+    shiftId,
+    loading: cargandoCaja,
+    refresh: refrescarCaja,
+  } = useOpenShift(currentBranch?.id);
 
   // Sin caja abierta no se vende: si la venta no queda dentro de un turno, el
   // arqueo del día nunca cuadra. El servidor rechaza igual, esto evita que el
@@ -81,7 +89,8 @@ export default function OperacionesApp() {
     // es el contenido, y la barra de pestañas no se puede ir de pantalla.
     <div className="flex flex-col h-dvh bg-[#0a0a0a] text-white">
       <div className="sticky top-0 z-30 bg-[#0a0a0a] border-b border-white/5">
-        <div className="flex justify-end px-3 pt-2 h-7 items-center">
+        <div className="flex justify-end gap-2 px-3 pt-2 h-7 items-center">
+          <BranchSwitcher />
           <SyncBadge />
         </div>
         <div className="flex max-w-4xl mx-auto px-1 sm:px-2">

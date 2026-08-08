@@ -1,17 +1,18 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { requireApiAdminOrSeller } from "@/lib/api-auth";
 import { errorResponse } from "@/lib/api-response";
 import { openShift, getCurrentShift } from "@/server/shifts.service";
 
 export const dynamic = "force-dynamic";
 
-/** GET /api/caja/shifts — turno abierto actual (o null). */
-export async function GET() {
+/** GET /api/caja/shifts?branchId=xxx — turno abierto actual de esa sucursal (o null). */
+export async function GET(req: NextRequest) {
   const auth = await requireApiAdminOrSeller();
   if (!auth.ok) return auth.response;
 
   try {
-    const shift = await getCurrentShift();
+    const branchId = new URL(req.url).searchParams.get("branchId");
+    const shift = await getCurrentShift({ branchId });
     return NextResponse.json({ shift });
   } catch (e) {
     return errorResponse(e);
@@ -35,9 +36,11 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Efectivo inicial inválido" }, { status: 400 });
     }
 
-    // Dos turnos abiertos a la vez hacen que las ventas se repartan entre
-    // ambos y ninguno cuadre. Si ya hay uno, se devuelve ese.
-    const existing = await getCurrentShift();
+    // Cada sucursal tiene su propia caja: dos turnos abiertos a la vez EN LA
+    // MISMA sucursal harían que las ventas se repartan entre ambos y ninguno
+    // cuadre, pero dos sucursales distintas sí pueden tener cada una el suyo.
+    // Si ya hay uno abierto para esta sucursal, se devuelve ese.
+    const existing = await getCurrentShift({ branchId: body.branchId ?? null });
     if (existing) {
       return NextResponse.json(
         { ok: true, shift: existing, alreadyOpen: true },

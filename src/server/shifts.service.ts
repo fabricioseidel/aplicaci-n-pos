@@ -104,7 +104,23 @@ export async function closeShift(
   };
 }
 
-export async function getCurrentShift(sellerId?: string | null): Promise<CashShift | null> {
+/**
+ * Turno abierto vigente.
+ *
+ * `branchId` es la clave de que la caja sea independiente por sucursal: cada
+ * una puede tener su propio turno abierto en simultáneo. Sin `branchId` se
+ * cae al comportamiento histórico (cualquier turno abierto, sin filtrar) —
+ * lo usan llamadas viejas o de un solo local que todavía no mandan sucursal.
+ */
+export async function getCurrentShift(
+  opts?: { branchId?: string | null; sellerId?: string | null } | string | null
+): Promise<CashShift | null> {
+  // Compatibilidad: la firma anterior recibía sólo `sellerId` como string.
+  const { branchId, sellerId } =
+    typeof opts === "string" || opts === null || opts === undefined
+      ? { branchId: undefined, sellerId: opts }
+      : opts;
+
   let query = supabaseServer
     .from("cash_shifts")
     .select("*")
@@ -112,6 +128,7 @@ export async function getCurrentShift(sellerId?: string | null): Promise<CashShi
     .order("started_at", { ascending: false })
     .limit(1);
 
+  if (branchId) query = query.eq("branch_id", branchId);
   if (sellerId) query = query.eq("seller_id", sellerId);
 
   const { data, error } = await query.maybeSingle();
@@ -124,6 +141,7 @@ export async function addCashMovement(data: {
   amount: number;
   type: "IN" | "OUT";
   reason: string;
+  method?: ShiftPaymentMethod;
 }) {
   const { error } = await supabaseServer.from("cash_movements").insert(data);
   if (error) throw new Error(error.message);
