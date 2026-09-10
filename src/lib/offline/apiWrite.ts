@@ -23,6 +23,17 @@ interface ApiWriteOptions {
    * caja necesita respuesta inmediata con el cuadre).
    */
   queueable?: boolean;
+  /**
+   * Nombre del campo por el que el servidor deduplica esta escritura. Se
+   * rellena con el mismo `id` del outbox, así el reintento llega con la misma
+   * clave y la base lo reconoce como ya aplicado.
+   *
+   * Sin esto, una respuesta que no llega por timeout (indistinguible de una
+   * petición que nunca salió) hace que el outbox reenvíe una operación que
+   * sí entró. En una recepción eso duplica el stock — es exactamente cómo se
+   * corrompió el inventario. Las ventas ya lo hacían con `clientSaleId`.
+   */
+  idField?: string;
 }
 
 /** Un fallo de `fetch` (TypeError) significa "no hubo red", no "el servidor dijo que no". */
@@ -45,6 +56,10 @@ export async function apiWrite<T = unknown>(opts: ApiWriteOptions): Promise<Writ
   const id = opts.id ?? newId();
   const queueable = opts.queueable !== false;
   const payload = { ...opts.payload };
+
+  if (opts.idField && payload[opts.idField] === undefined) {
+    payload[opts.idField] = id;
+  }
 
   const queue = async (): Promise<WriteResult<T>> => {
     if (!queueable) {

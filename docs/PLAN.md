@@ -94,10 +94,12 @@ y funciona bien.
 Están documentados en el README y son decisiones conscientes, pero conviene
 ponerles fecha antes de que el volumen los convierta en problema:
 
-- **Movimientos de caja y recepciones no tienen deduplicación en la base.** Las
-  ventas sí (`p_client_sale_id`). Si el outbox reintenta un ingreso de efectivo
-  tras una caída de red, entra dos veces y el arqueo no cuadra. La solución es
-  la misma que ya funciona en ventas: un uuid de cliente + índice único.
+- ~~**Movimientos de caja y recepciones no tienen deduplicación en la base.**~~
+  Hecho para recepciones, traspasos y conteos (10-sep-2026): cada lote lleva un
+  `opId` de cliente que la base registra en `stock_ops`
+  (`20260910000000_conteo_fisico_de_inventario.sql`). **Los movimientos de caja
+  siguen pendientes**: si el outbox reintenta un ingreso de efectivo tras una
+  caída de red, entra dos veces y el arqueo no cuadra. La solución es la misma.
 - **Los errores de Postgres llegan crudos a la pantalla del cajero.**
   `errorResponse` devuelve `error.message` tal cual — por eso el toast decía
   `violates foreign key constraint "cash_shifts_user_id_fkey"`. Además de ser
@@ -159,6 +161,6 @@ el nombre o la URL.
    bug más cara).
 3. Sentry (una hora).
 4. Los cuatro tests del POS (un día).
-5. Deduplicación de movimientos de caja y recepciones.
+5. Deduplicación de movimientos de caja (recepciones y conteos ya la tienen).
 6. Migraciones versionadas + consolidar `apply_sale`.
 7. Keystore propio y release APK.

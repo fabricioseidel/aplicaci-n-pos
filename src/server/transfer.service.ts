@@ -12,6 +12,8 @@ export interface CreateTransferInput {
   toBranchId: string;
   reference?: string | null;
   notes?: string | null;
+  /** Clave de idempotencia del cliente: evita que el outbox traspase dos veces. */
+  opId?: string | null;
 }
 
 /**
@@ -27,6 +29,7 @@ export async function createTransfer({
   toBranchId,
   reference,
   notes,
+  opId,
 }: CreateTransferInput): Promise<{ ok: true; transferId: string; count: number } | { ok: false; error: string }> {
   if (!items?.length) return { ok: false, error: "No hay ítems para traspasar" };
   if (!toBranchId) return { ok: false, error: "Falta la sucursal destino" };
@@ -49,8 +52,18 @@ export async function createTransfer({
     p_to_branch_id: toBranchId,
     p_reference: reference ?? null,
     p_notes: notes ?? null,
+    p_op_id: opId ?? null,
   });
 
   if (error) return { ok: false, error: error.message };
-  return { ok: true, transferId: (data as string) ?? "", count: payload.length };
+
+  const transferId = (data as string) ?? "";
+
+  // El RPC devuelve este centinela cuando el op_id ya estaba aplicado: el
+  // traspaso entró la primera vez, no se movió nada ahora.
+  if (transferId === "YA_APLICADO") {
+    return { ok: true, transferId, count: 0 };
+  }
+
+  return { ok: true, transferId, count: payload.length };
 }

@@ -10,8 +10,8 @@ tienda pública. Una barra de seis pestañas y nada más.
 | Pestaña | Qué hace |
 | --- | --- |
 | **Venta** | Carrito, escaneo, pago mixto (efectivo / tarjeta / transferencia), venta por peso |
-| **Recepción** | Escanea mercadería que llega y suma stock (`apply_reception`) |
-| **Inventario** | Verificación por escaneo: lo escaneado queda activo |
+| **Recepción** | Escanea mercadería que llega y **suma** stock (`apply_reception`) |
+| **Conteo** | Toma de inventario: **fija** la cantidad real (`apply_stock_absolute`) |
 | **Caja** | Abre turno, ingresos y egresos manuales de efectivo |
 | **Cierre** | Arqueo por método de pago contra lo esperado (`close_shift`) |
 | **Productos** | Alta y edición de productos, incluido el marcado "se vende por peso" |
@@ -54,6 +54,57 @@ protege todo salvo `/login`, `/api/auth/*` y los estáticos.
 
 No hay Google OAuth a propósito: acá se entra con la cuenta de la tienda.
 
+## Conteo de inventario (toma de inventario)
+
+Recepción y Conteo hacen cosas distintas y no son intercambiables:
+
+| | Recepción | Conteo |
+| --- | --- | --- |
+| Qué hace con la cantidad | la **suma** al stock | la **fija** como el stock |
+| Para qué es | mercadería que acaba de llegar | saber qué hay de verdad en la tienda |
+| Escanear dos veces | suma dos veces | queda la última cantidad |
+
+Contar con Recepción es lo que corrompió el inventario: suma lo contado sobre
+lo que el sistema ya creía tener (si decía 12 y hay 5, queda 17), y no había
+forma de decir "hay 5" ni "no hay ninguno".
+
+El flujo es:
+
+1. **Empezar conteo** — abre una sesión para la sucursal. Sólo puede haber una
+   abierta a la vez, así que dos teléfonos cuentan sobre la misma sesión y se
+   ven el avance.
+2. **Escanear y escribir la cantidad** — cada escaneo del mismo código suma una
+   unidad (se cuenta pasando el lector por cada envase) y la cantidad también se
+   puede escribir. Lo que se escanea con existencias queda disponible en la
+   tienda al instante; no hay que esperar el cierre.
+3. **Guardar** — manda el lote. La lista sin guardar vive en el teléfono
+   (`localStorage`), así que cerrar la app a mitad de una góndola no la pierde.
+4. **Cerrar conteo** (sólo admin) — lo que nunca se escaneó queda en 0 y sale
+   del catálogo disponible. **Eso** es lo que define qué hay a la fecha.
+
+**No hace falta poner todo en 0 antes de empezar**, y conviene no hacerlo:
+durante el conteo la tienda sigue vendiendo y un catálogo en cero rechaza las
+ventas web. Contar y dejar que el cierre barra lo no contado llega al mismo
+resultado sin ese hueco. La opción existe igual (casilla "poner todo en 0",
+sólo admin) porque a veces se prefiere arrancar de una hoja en blanco.
+
+Sin conexión el conteo sigue: el conteo abierto queda recordado en el teléfono y
+lo escaneado se encola en el outbox. Abrir y cerrar el conteo sí necesitan red.
+
+### Por qué no se puede duplicar
+
+- Las cantidades son **absolutas**: reenviar un lote deja el mismo número.
+- Cada lote lleva un `opId` (uuid del cliente) que la base registra en
+  `stock_ops` y descarta si ya lo aplicó. Recepción y Traspaso también lo llevan
+  desde ahora: antes, una respuesta que no llegaba por timeout —indistinguible
+  de una petición que nunca salió— hacía que el outbox reenviara una recepción
+  que sí había entrado, y el stock quedaba al doble.
+- `products.stock` tiene **un solo escritor**: es derivado de `branch_stock` y lo
+  recalcula un trigger. Ni el POS ni el panel lo escriben. Por eso el campo
+  "stock" de la pestaña Productos ya no escribe la columna: aplica la cantidad
+  como ajuste absoluto sobre la sucursal (`MANUAL_ADJUSTMENT`), que es lo que
+  antes se descartaba en silencio.
+
 ## Venta por peso
 
 Un producto con `by_weight = true` interpreta su `sale_price` como **precio por
@@ -82,8 +133,10 @@ hasta la base.
 
 Las **ventas son idempotentes**: cada una lleva un UUID de cliente que viaja
 como `p_client_sale_id` a `apply_sale`, que deduplica. Reintentar una venta
-encolada no puede cobrarla dos veces. Los movimientos de caja y las recepciones
-no tienen deduplicación en la base — es una limitación conocida y asumida.
+encolada no puede cobrarla dos veces. Recepción, Traspaso y Conteo hacen lo
+mismo con `opId` contra la tabla `stock_ops`. Los **movimientos de caja** siguen
+sin deduplicación: si el outbox reintenta un ingreso de efectivo tras una caída
+de red, entra dos veces y el arqueo no cuadra. Es la última pieza pendiente.
 
 Abrir y cerrar caja **no** se encolan: ambas necesitan la respuesta real del
 servidor (el `shiftId` y el cuadre).
@@ -126,9 +179,26 @@ migra esquema; se apoya en lo que ya existe:
 
 - `apply_sale(...)` — crea la venta completa en una transacción, idempotente por
   `p_client_sale_id`.
-- `apply_reception(p_items, p_branch_id, p_reference, p_notes)` — suma stock.
+- `apply_reception(p_items, p_branch_id, p_reference, p_notes, p_op_id)` — suma
+  stock; idempotente por `p_op_id`.
+- `apply_stock_absolute(p_items, p_branch_id, p_op_id, p_reason, p_session_id,
+  p_counted_by)` — **fija** cantidades exactas. Es la puerta del conteo y de los
+  ajustes manuales.
+- `open_stock_count` / `stock_count_progress` / `close_stock_count` — sesión de
+  conteo físico.
 - `close_shift(p_shift_id, p_counts)` — cuadre por método de pago.
 - `v_shifts_history` — historial de turnos (`GET /api/reports/shifts`).
 
 El identificador de negocio de un producto es `barcode` (los upserts van con
 `onConflict: 'barcode'`), no la PK `id`.
+
+Las migraciones viven en **OlivoWeb** (`supabase/migrations/`), que es el dueño
+del esquema. Las funciones del conteo se agregaron en
+`20260910000000_conteo_fisico_de_inventario.sql`, que además explica en detalle
+cómo se rompía el stock antes. Una RPC que cambia de firma hay que cambiarla ahí
+y desplegar los dos repos: no hay tipos generados que avisen en tiempo de build,
+así que el desfase aparece recién cuando un cajero no puede vender.
+
+**Modelo de stock, en una línea:** `branch_stock` (por sucursal) es la fuente de
+verdad; `products.stock` es derivado y lo escribe **sólo** un trigger. Nada del
+POS escribe esa columna.
