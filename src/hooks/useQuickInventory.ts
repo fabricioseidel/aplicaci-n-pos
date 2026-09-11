@@ -151,6 +151,9 @@ export function useQuickInventory(mode: QuickInventoryMode = "reception") {
           ? {
               kind: "transfer",
               url: "/api/transfers",
+              // La base deduplica por este campo: si el outbox reenvía el
+              // traspaso porque la respuesta no llegó, no se aplica dos veces.
+              idField: "opId",
               payload: {
                 items: items.map((i) => ({
                   barcode: i.product.barcode || i.product.id,
@@ -163,6 +166,8 @@ export function useQuickInventory(mode: QuickInventoryMode = "reception") {
           : {
               kind: "reception",
               url: "/api/reception",
+              // Ídem recepción: sin esto, un reintento sumaba el stock de nuevo.
+              idField: "opId",
               payload: {
                 items: items.map((i) => ({
                   barcode: i.product.barcode || i.product.id,

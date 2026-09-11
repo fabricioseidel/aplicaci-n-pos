@@ -4,7 +4,15 @@ import Dexie, { type Table } from "dexie";
 import type { ProductUI } from "@/types";
 
 /** Tipos de escritura que la app sabe encolar y reintentar. */
-export type OutboxKind = "sale" | "movement" | "shiftOpen" | "shiftClose" | "reception" | "transfer";
+export type OutboxKind =
+  | "sale"
+  | "movement"
+  | "shiftOpen"
+  | "shiftClose"
+  | "reception"
+  | "transfer"
+  /** Conteo físico: cantidades absolutas, deduplicado por `opId`. */
+  | "count";
 
 export type OutboxStatus = "pending" | "syncing" | "failed";
 

@@ -3,6 +3,7 @@ import { supabaseServer } from "@/lib/supabase-server";
 import { requireApiAdminOrSeller } from "@/lib/api-auth";
 import { errorResponse, successResponse } from "@/lib/api-response";
 import { mapSupaToUI, PRODUCT_COLUMNS } from "@/services/products";
+import { applyCount, type CountItem } from "@/server/stock-count.service";
 import type { SupaProduct } from "@/types";
 
 export const dynamic = "force-dynamic";
@@ -84,7 +85,21 @@ async function upsertProductsWithColumnFallback(payloadsInput: Record<string, un
   throw lastError;
 }
 
-/** POST /api/products — crea o actualiza por `barcode`. */
+/**
+ * POST /api/products — crea o actualiza por `barcode`.
+ *
+ * `stock` recibe un trato aparte: NO se escribe en `products`. La columna es
+ * derivada de `branch_stock` (un trigger la recalcula en cada escritura), así
+ * que hasta ahora el número que se escribía acá se descartaba en silencio —
+ * el mostrador editaba el stock, veía el toast de éxito y el valor volvía
+ * solo. Antes de que existiera ese trigger era peor: la edición de un
+ * producto pisaba el stock real con el que el navegador tenía cacheado y
+ * revertía la recepción que otra persona acababa de registrar.
+ *
+ * Ahora la cantidad que llega se aplica como un ajuste absoluto sobre la
+ * sucursal (`apply_stock_absolute`, motivo `MANUAL_ADJUSTMENT`): mueve el
+ * stock de verdad y queda el rastro en `inventory_movements`.
+ */
 export async function POST(req: Request) {
   const auth = await requireApiAdminOrSeller();
   if (!auth.ok) return auth.response;
@@ -112,9 +127,49 @@ export async function POST(req: Request) {
       if (!item?.barcode) return errorResponse(new Error("Missing barcode"), 400);
     }
 
-    await upsertProductsWithColumnFallback(items);
+    // El stock sale del payload y se aplica aparte, sobre branch_stock.
+    const stockObjetivo: CountItem[] = [];
+    const payloads = items.map((item) => {
+      const { stock, ...resto } = item;
+      const qty = Number(stock);
+      if (stock !== undefined && stock !== null && Number.isFinite(qty) && qty >= 0) {
+        stockObjetivo.push({ barcode: String(item.barcode), qty });
+      }
+      return resto;
+    });
 
-    return successResponse({ success: true, count: items.length });
+    // Los productos primero: `apply_stock_absolute` ignora los códigos que no
+    // existen todavía, así que un alta con stock necesita este orden.
+    await upsertProductsWithColumnFallback(payloads);
+
+    let stockAplicado = 0;
+    let stockError: string | null = null;
+
+    if (stockObjetivo.length > 0) {
+      const branchId =
+        typeof (body as { branchId?: unknown }).branchId === "string"
+          ? ((body as { branchId?: string }).branchId as string)
+          : null;
+
+      const res = await applyCount({
+        items: stockObjetivo,
+        branchId,
+        reason: "MANUAL_ADJUSTMENT",
+        countedBy: auth.session.user?.name ?? auth.session.user?.email ?? auth.userId ?? null,
+      });
+
+      if (res.ok) stockAplicado = res.ajustados;
+      // El producto ya quedó guardado; que falle el ajuste de stock no puede
+      // hacer parecer que no se guardó nada. Se informa aparte.
+      else stockError = res.error;
+    }
+
+    return successResponse({
+      success: true,
+      count: items.length,
+      stockAjustado: stockAplicado,
+      ...(stockError ? { stockError } : {}),
+    });
   } catch (e) {
     return errorResponse(e);
   }

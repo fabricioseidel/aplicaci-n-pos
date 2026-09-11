@@ -6,7 +6,7 @@ import {
   ArchiveBoxArrowDownIcon,
   BanknotesIcon,
   LockClosedIcon,
-  QrCodeIcon,
+  ClipboardDocumentCheckIcon,
   TagIcon,
   CloudIcon,
   ArrowPathIcon,
@@ -19,16 +19,16 @@ import SaleMode from "@/components/operaciones/SaleMode";
 import ReceptionMode from "@/components/operaciones/ReceptionMode";
 import CajaMode from "@/components/operaciones/CajaMode";
 import CloseMode from "@/components/operaciones/CloseMode";
-import InventarioMode from "@/components/operaciones/InventarioMode";
+import ConteoMode from "@/components/operaciones/ConteoMode";
 import ProductosMode from "@/components/operaciones/ProductosMode";
 import BranchSwitcher from "@/components/operaciones/BranchSwitcher";
 
-type OperationsMode = "VENTA" | "RECEPCION" | "INVENTARIO" | "CAJA" | "CIERRE" | "PRODUCTOS";
+type OperationsMode = "VENTA" | "RECEPCION" | "CONTEO" | "CAJA" | "CIERRE" | "PRODUCTOS";
 
 const TABS: { id: OperationsMode; label: string; icon: typeof ShoppingCartIcon }[] = [
   { id: "VENTA", label: "Venta", icon: ShoppingCartIcon },
   { id: "RECEPCION", label: "Recepción", icon: ArchiveBoxArrowDownIcon },
-  { id: "INVENTARIO", label: "Inventario", icon: QrCodeIcon },
+  { id: "CONTEO", label: "Conteo", icon: ClipboardDocumentCheckIcon },
   { id: "CAJA", label: "Caja", icon: BanknotesIcon },
   { id: "CIERRE", label: "Cierre", icon: LockClosedIcon },
   { id: "PRODUCTOS", label: "Productos", icon: TagIcon },
@@ -147,7 +147,7 @@ export default function OperacionesApp() {
           </POSProvider>
         )}
         {mode === "RECEPCION" && <ReceptionMode />}
-        {mode === "INVENTARIO" && <InventarioMode />}
+        {mode === "CONTEO" && <ConteoMode />}
         {mode === "CAJA" && <CajaMode onShiftChange={refrescarCaja} />}
         {mode === "CIERRE" && <CloseMode onShiftChange={refrescarCaja} />}
         {mode === "PRODUCTOS" && <ProductosMode />}
