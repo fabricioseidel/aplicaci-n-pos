@@ -1,151 +1,172 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
+import {
+  BanknotesIcon, ArrowPathIcon, CreditCardIcon, UserGroupIcon,
+  ClipboardDocumentCheckIcon, LockClosedIcon, PrinterIcon, CheckCircleIcon,
+} from "@heroicons/react/24/outline";
 import { useToast } from "@/contexts/ToastContext";
 import { useBranch } from "@/contexts/BranchContext";
-import type { CashShift, ShiftMethodBreakdown } from "@/server/shifts.service";
-import {
-  LockClosedIcon, ArrowPathIcon, BanknotesIcon, CreditCardIcon, UserIcon,
-} from "@heroicons/react/24/outline";
+import type { CashShift } from "@/server/shifts.service";
+import type { CierrePayload, CierreResumen } from "@/lib/cierre/types";
+import { clp, businessDateToday } from "@/lib/cierre/denominations";
+import { calcularPreview } from "@/lib/cierre/calc";
+import { compartirCierre } from "@/lib/print/cierrePdf";
+import { useCierreDraft } from "./cierre/useCierreDraft";
+import PasoEfectivo from "./cierre/PasoEfectivo";
+import PasoTransferencias from "./cierre/PasoTransferencias";
+import PasoVouchers from "./cierre/PasoVouchers";
+import PasoFiados from "./cierre/PasoFiados";
+import PasoResumen from "./cierre/PasoResumen";
+import { FilaTotal, Tarjeta } from "./cierre/campos";
 
-// CARD es el pago con tarjeta unificado y STAFF_CREDIT la compra de personal
-// por cobrar. DEBIT/CREDIT/WALLET quedan sólo para registros históricos.
-type Method = "CASH" | "CARD" | "TRANSFER" | "STAFF_CREDIT" | "DEBIT" | "CREDIT" | "WALLET" | "OTHER";
+const PASOS = [
+  { id: "EFECTIVO", label: "Efectivo", icon: BanknotesIcon },
+  { id: "TRANSFER", label: "Transf.", icon: ArrowPathIcon },
+  { id: "TARJETA", label: "Tarjeta", icon: CreditCardIcon },
+  { id: "FIADOS", label: "Fiados", icon: UserGroupIcon },
+  { id: "RESUMEN", label: "Resumen", icon: ClipboardDocumentCheckIcon },
+] as const;
 
-const METHOD_LABEL: Record<Method, string> = {
-  CASH: "Efectivo", CARD: "Tarjeta", TRANSFER: "Transferencia",
-  STAFF_CREDIT: "Por cobrar (personal)",
-  DEBIT: "Tarjeta (débito)", CREDIT: "Tarjeta (crédito)", WALLET: "Tarjeta (billetera)",
-  OTHER: "Otro",
-};
+type PasoId = (typeof PASOS)[number]["id"];
 
-const METHOD_ICON: Record<Method, typeof BanknotesIcon> = {
-  CASH: BanknotesIcon, CARD: CreditCardIcon, TRANSFER: ArrowPathIcon,
-  STAFF_CREDIT: UserIcon,
-  DEBIT: CreditCardIcon, CREDIT: CreditCardIcon, WALLET: CreditCardIcon,
-  OTHER: CreditCardIcon,
-};
-
-interface SalePayment { method: Method; amount: number }
-interface ShiftSaleRow {
-  id: number;
-  total: number;
-  payment_method?: string;
-  sale_payments?: SalePayment[];
+interface Movimiento {
+  amount: number;
+  type: "IN" | "OUT";
+  method?: string;
 }
 
+/**
+ * Cierre de caja declarado.
+ *
+ * El cierre anterior calculaba el "esperado" sumando las ventas que habían
+ * pasado por el POS. Como el POS todavía no se usa para todas las ventas, ese
+ * esperado daba cero y el día entero aparecía como descuadre — no había forma
+ * de registrar lo que se anota en el cuaderno.
+ *
+ * Acá el cajero declara lo que hubo y eso queda como la verdad del día. Lo que
+ * el POS sí registró se guarda aparte (`pos_totals`) para conciliar cuando el
+ * inventario esté al día, sin bloquear el cierre mientras tanto.
+ */
 export default function CloseMode({ onShiftChange }: { onShiftChange?: () => void } = {}) {
   const { showToast } = useToast();
   const { currentBranch } = useBranch();
-  const [shift, setShift] = useState<CashShift | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [closing, setClosing] = useState(false);
-  /** Esperado por método, calculado desde ventas + movimientos del turno. */
-  const [expected, setExpected] = useState<Partial<Record<Method, number>>>({});
-  /** Conteo físico que ingresa el cajero. */
-  const [counts, setCounts] = useState<Partial<Record<Method, number>>>({});
 
-  const fetchShift = useCallback(async () => {
+  const [shift, setShift] = useState<CashShift | null>(null);
+  const [movimientos, setMovimientos] = useState<Movimiento[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [guardando, setGuardando] = useState(false);
+  const [paso, setPaso] = useState<PasoId>("EFECTIVO");
+  const [resultado, setResultado] = useState<CierreResumen | null>(null);
+
+  const { draft, patch, clear, restored } = useCierreDraft(shift?.id ?? null);
+
+  const cargar = useCallback(async () => {
     setLoading(true);
     try {
-      // El turno a cerrar es el de la sucursal activa: cada una cierra su
-      // propia caja, no importa qué otra tenga un turno abierto en paralelo.
-      const shiftUrl = currentBranch?.id
+      const url = currentBranch?.id
         ? `/api/caja/shifts?branchId=${encodeURIComponent(currentBranch.id)}`
         : "/api/caja/shifts";
-      const shiftRes = await fetch(shiftUrl, { cache: "no-store" });
-      if (!shiftRes.ok) throw new Error(String(shiftRes.status));
-      const { shift: s } = (await shiftRes.json()) as { shift: CashShift | null };
+      const res = await fetch(url, { cache: "no-store" });
+      if (!res.ok) throw new Error(String(res.status));
+      const { shift: s } = (await res.json()) as { shift: CashShift | null };
       setShift(s);
-      if (!s?.id) return;
 
-      const res = await fetch(`/api/caja?shiftId=${s.id}`, { cache: "no-store" });
-      if (!res.ok) return;
-      const data = await res.json();
-
-      const sales: ShiftSaleRow[] = data.sales || [];
-      const movements: Array<{ amount: number; type: "IN" | "OUT"; method?: Method }> =
-        data.movements || [];
-
-      const byMethod: Partial<Record<Method, number>> = {};
-      sales.forEach((sale) => {
-        if (Array.isArray(sale.sale_payments) && sale.sale_payments.length) {
-          sale.sale_payments.forEach((p) => {
-            byMethod[p.method] = (byMethod[p.method] || 0) + Number(p.amount);
-          });
-        } else {
-          // Fallback al método único legacy. Débito/crédito/billetera colapsan
-          // en tarjeta: el extracto bancario no los separa, el arqueo tampoco.
-          const pm = sale.payment_method || "";
-          const m: Method =
-            /cash|efectivo/i.test(pm) ? "CASH" :
-            /transfer/i.test(pm) ? "TRANSFER" :
-            /debit|credit|card|tarjeta|wallet|prepago/i.test(pm) ? "CARD" :
-            "OTHER";
-          byMethod[m] = (byMethod[m] || 0) + Number(sale.total);
+      if (s?.id) {
+        const mov = await fetch(`/api/caja?shiftId=${s.id}`, { cache: "no-store" });
+        if (mov.ok) {
+          const data = (await mov.json()) as { movements?: Movimiento[] };
+          setMovimientos(data.movements ?? []);
         }
-      });
-
-      // Cada movimiento manual (ingreso/egreso) suma o resta del método en
-      // que realmente se movió el dinero, no siempre efectivo.
-      movements.forEach((m) => {
-        const method = m.method ?? "CASH";
-        const delta = m.type === "IN" ? Number(m.amount) : -Number(m.amount);
-        byMethod[method] = (byMethod[method] || 0) + delta;
-      });
-      // Sólo el efectivo arrastra el fondo inicial del turno.
-      byMethod.CASH = (byMethod.CASH || 0) + Number(s.starting_cash);
-
-      setExpected(byMethod);
-    } catch (e) {
-      console.error(e);
+      }
+    } catch {
+      /* sin red no se puede saber si hay turno: se deja la pantalla como está */
     } finally {
       setLoading(false);
     }
   }, [currentBranch?.id]);
 
-  useEffect(() => { void fetchShift(); }, [fetchShift]);
+  useEffect(() => {
+    void cargar();
+  }, [cargar]);
 
-  const handleClose = async () => {
-    if (!shift) return;
-    setClosing(true);
+  // Sólo los movimientos en efectivo mueven billetes en el cajón; uno por
+  // transferencia no cambia lo que se cuenta al cerrar.
+  const { ingresos, egresos } = useMemo(() => {
+    const soloEfectivo = movimientos.filter((m) => (m.method ?? "CASH") === "CASH");
+    return {
+      ingresos: soloEfectivo.filter((m) => m.type === "IN").reduce((a, m) => a + Number(m.amount), 0),
+      egresos: soloEfectivo.filter((m) => m.type === "OUT").reduce((a, m) => a + Number(m.amount), 0),
+    };
+  }, [movimientos]);
+
+  const sencilloInicial = Number(shift?.starting_cash ?? 0);
+
+  const preview = useMemo(
+    () =>
+      calcularPreview({
+        denominations: draft.denominations,
+        cashCounted: draft.cashCounted,
+        transfers: draft.transfers,
+        vouchers: draft.vouchers,
+        abonos: draft.abonos,
+        fiados: draft.fiados,
+        sencilloInicial,
+        ingresos,
+        egresos,
+      }),
+    [draft, sencilloInicial, ingresos, egresos]
+  );
+
+  const registrar = async () => {
+    if (!shift?.id || guardando) return;
+    setGuardando(true);
     try {
-      // Sólo se envían los métodos que el cajero contó o que tienen esperado.
-      const payload: Partial<Record<Method, number>> = {};
-      (Object.keys(METHOD_LABEL) as Method[]).forEach((m) => {
-        if (counts[m] !== undefined || (expected[m] ?? 0) > 0) {
-          payload[m] = Number(counts[m] ?? 0);
-        }
-      });
+      const payload: CierrePayload = {
+        business_date: businessDateToday(),
+        notes: draft.notes || undefined,
+        denominations: Object.entries(draft.denominations)
+          .map(([d, q]) => ({ denomination: Number(d), quantity: Number(q) }))
+          .filter((d) => d.quantity > 0),
+        cash_counted: draft.cashCounted ?? undefined,
+        transfers: draft.transfers,
+        vouchers: draft.vouchers,
+        fiados: draft.fiados,
+        abonos: draft.abonos,
+      };
 
-      // El cierre NO se encola offline: el cajero necesita ver el cuadre real
-      // que calcula el servidor antes de irse, y un cierre "optimista" que
-      // después falle dejaría el turno abierto sin que nadie se entere.
-      const res = await fetch(`/api/caja/shifts/${shift.id}/close`, {
+      const res = await fetch("/api/caja/cierre", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ counts: payload }),
+        body: JSON.stringify({ shiftId: shift.id, payload }),
       });
-      const data = await res.json().catch(() => ({}));
+      const data = (await res.json()) as { resumen?: CierreResumen; error?: string };
 
-      if (!res.ok) {
-        showToast(data?.error || "Error al cerrar caja", "error");
+      if (!res.ok || !data.resumen) {
+        showToast(data.error ?? "No se pudo registrar el cierre", "error");
         return;
       }
 
-      const breakdown = (data.breakdown ?? {}) as Record<string, ShiftMethodBreakdown>;
-      const totalDiff = Object.values(breakdown).reduce((a, b) => a + (b?.difference ?? 0), 0);
-      showToast(
-        `Caja cerrada ✓ Diferencia total: $${totalDiff.toLocaleString()}`,
-        totalDiff === 0 ? "success" : "info"
-      );
-      setCounts({});
+      setResultado(data.resumen);
+      clear();
       onShiftChange?.();
-      await fetchShift();
-    } catch (e) {
-      showToast(e instanceof Error ? e.message : "Error al cerrar caja", "error");
+      showToast("Cierre registrado ✓", "success");
+    } catch {
+      // El cierre no se encola sin conexión a propósito: se arma sobre el
+      // sencillo inicial y los movimientos del turno, y reenviarlo más tarde
+      // contra un estado distinto daría un cierre equivocado sin avisar.
+      showToast("Sin conexión. El borrador quedó guardado, reintenta al volver la red.", "warning");
     } finally {
-      setClosing(false);
+      setGuardando(false);
+    }
+  };
+
+  const imprimir = async (resumen: CierreResumen) => {
+    try {
+      const via = await compartirCierre(resumen);
+      if (via === "downloaded") showToast("PDF descargado ✓", "success");
+    } catch {
+      showToast("No se pudo generar el PDF", "error");
     }
   };
 
@@ -157,6 +178,56 @@ export default function CloseMode({ onShiftChange }: { onShiftChange?: () => voi
     );
   }
 
+  // ── Cierre recién registrado ────────────────────────────────────────────
+  if (resultado) {
+    const t = resultado.shift.declared_totals;
+    return (
+      <div className="max-w-md mx-auto p-4 space-y-4">
+        <div className="text-center py-6">
+          <CheckCircleIcon className="w-14 h-14 text-emerald-400 mx-auto mb-3" />
+          <h2 className="text-xl font-black">Caja cerrada</h2>
+          <p className="text-white/40 text-xs mt-1">
+            {resultado.branch ?? "Local"} · {resultado.shift.business_date}
+          </p>
+        </div>
+
+        <Tarjeta>
+          <FilaTotal label="Efectivo" value={clp(t?.CASH.ventas ?? 0)} />
+          <FilaTotal label="Transferencia" value={clp(t?.TRANSFER.ventas ?? 0)} />
+          <FilaTotal label="Tarjeta" value={clp(t?.CARD.ventas ?? 0)} />
+          <div className="pt-3 border-t border-white/10">
+            <FilaTotal label="Total ventas" value={clp(t?.total_ventas ?? 0)} destacado />
+          </div>
+        </Tarjeta>
+
+        <button
+          type="button"
+          onClick={() => imprimir(resultado)}
+          className="w-full h-14 rounded-2xl bg-white text-black font-black uppercase tracking-widest text-xs flex items-center justify-center gap-2 active:bg-white/80 transition-colors"
+        >
+          <PrinterIcon className="w-5 h-5" />
+          Imprimir / compartir
+        </button>
+
+        <p className="text-center text-[11px] leading-relaxed text-white/30 px-4">
+          Se genera un PDF de 58 mm. Elige tu app de impresión en el menú de compartir de Android.
+        </p>
+
+        <button
+          type="button"
+          onClick={() => {
+            setResultado(null);
+            void cargar();
+          }}
+          className="w-full text-[10px] font-black uppercase tracking-widest text-white/30 hover:text-white/60 py-3"
+        >
+          Volver
+        </button>
+      </div>
+    );
+  }
+
+  // ── Sin turno abierto ───────────────────────────────────────────────────
   if (!shift) {
     return (
       <div className="max-w-sm mx-auto p-6 text-center">
@@ -164,111 +235,113 @@ export default function CloseMode({ onShiftChange }: { onShiftChange?: () => voi
           <LockClosedIcon className="h-8 w-8 text-white/30" />
         </div>
         <p className="text-white/40 text-sm font-bold">No hay turno abierto.</p>
-        <p className="text-white/20 text-xs mt-1">Abre un turno en la pestaña Caja primero.</p>
+        <p className="text-white/20 text-xs mt-1">Abre la caja del día en la pestaña Caja.</p>
       </div>
     );
   }
 
-  const methodsWithActivity = (Object.keys(METHOD_LABEL) as Method[])
-    .filter((m) => (expected[m] ?? 0) > 0 || counts[m] !== undefined);
-
-  const totalExpected = methodsWithActivity.reduce((a, m) => a + (expected[m] ?? 0), 0);
-  const totalCounted = methodsWithActivity.reduce((a, m) => a + (counts[m] ?? 0), 0);
-  const totalDiff = totalCounted - totalExpected;
+  const indice = PASOS.findIndex((p) => p.id === paso);
+  const esUltimo = indice === PASOS.length - 1;
 
   return (
-    <div className="max-w-2xl mx-auto p-4 space-y-4">
-      <div className="text-center">
-        <div className="w-12 h-12 bg-red-500/10 rounded-full flex items-center justify-center mx-auto mb-2">
-          <LockClosedIcon className="h-6 w-6 text-red-400" />
+    <div className="max-w-2xl mx-auto pb-28">
+      {/* Navegación de pasos */}
+      <div className="sticky top-0 z-10 bg-[#0a0a0a] border-b border-white/5 px-1">
+        <div className="flex">
+          {PASOS.map(({ id, label, icon: Icon }, i) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => setPaso(id)}
+              aria-current={paso === id ? "step" : undefined}
+              className={`flex-1 flex flex-col items-center gap-1 py-2.5 text-[8px] font-black uppercase tracking-widest border-b-2 transition-colors ${
+                paso === id
+                  ? "border-emerald-500 text-emerald-400"
+                  : i < indice
+                    ? "border-transparent text-white/40"
+                    : "border-transparent text-white/20"
+              }`}
+            >
+              <Icon className="w-4 h-4" />
+              {label}
+            </button>
+          ))}
         </div>
-        <h2 className="text-lg font-black uppercase tracking-widest">Cerrar Turno</h2>
-        <p className="text-white/30 text-xs mt-1">
-          Apertura: {new Date(shift.started_at).toLocaleTimeString()} · Cuenta físicamente el
-          efectivo y registra los totales de cada terminal
+      </div>
+
+      {restored && (
+        <p className="mx-4 mt-3 rounded-xl bg-white/5 border border-white/10 p-3 text-[11px] leading-relaxed text-white/45">
+          Recuperamos el cierre que habías empezado. Revisa que esté completo antes de registrarlo.
         </p>
+      )}
+
+      <div className="p-4">
+        {paso === "EFECTIVO" && (
+          <PasoEfectivo
+            draft={draft}
+            patch={patch}
+            sencilloInicial={sencilloInicial}
+            ingresos={ingresos}
+            egresos={egresos}
+          />
+        )}
+        {paso === "TRANSFER" && <PasoTransferencias draft={draft} patch={patch} />}
+        {paso === "TARJETA" && <PasoVouchers draft={draft} patch={patch} />}
+        {paso === "FIADOS" && <PasoFiados draft={draft} patch={patch} />}
+        {paso === "RESUMEN" && (
+          <PasoResumen
+            draft={draft}
+            patch={patch}
+            preview={preview}
+            fecha={businessDateToday()}
+            local={currentBranch?.name ?? "Local"}
+          />
+        )}
       </div>
 
-      <div className="space-y-2">
-        {methodsWithActivity.length === 0 && (
-          <div className="bg-white/5 rounded-2xl p-6 text-center border border-white/10">
-            <p className="text-white/40 text-xs">No hay actividad en este turno todavía.</p>
+      {/* Barra fija: total corriendo + avance */}
+      <div className="fixed bottom-0 inset-x-0 z-20 bg-[#0a0a0a]/95 backdrop-blur border-t border-white/10 px-4 py-3">
+        <div className="max-w-2xl mx-auto flex items-center gap-3">
+          <div className="flex-1 min-w-0">
+            <p className="text-[9px] font-black uppercase tracking-widest text-white/30">
+              Total del día
+            </p>
+            <p className="text-lg font-black text-emerald-400 tabular-nums truncate">
+              {clp(preview.totalVentas)}
+            </p>
           </div>
-        )}
 
-        {methodsWithActivity.map((m) => {
-          const Icon = METHOD_ICON[m];
-          const exp = expected[m] ?? 0;
-          const act = counts[m] ?? 0;
-          const diff = act - exp;
-          const hasInput = counts[m] !== undefined;
-          return (
-            <div key={m} className="bg-white/5 rounded-2xl p-3 border border-white/10">
-              <div className="flex items-center gap-3 mb-2">
-                <Icon className="h-5 w-5 text-emerald-400 shrink-0" />
-                <span className="text-[11px] font-black uppercase tracking-widest text-white flex-1">
-                  {METHOD_LABEL[m]}
-                </span>
-                <span className="text-[10px] text-yellow-400 font-bold">
-                  Esperado: $ {exp.toLocaleString()}
-                </span>
-              </div>
-              <div className="flex gap-2 items-center">
-                <input
-                  type="number"
-                  inputMode="numeric"
-                  placeholder="Contado físico"
-                  aria-label={`Contado en ${METHOD_LABEL[m]}`}
-                  data-laser-passthrough
-                  value={hasInput ? (act || "") : ""}
-                  onChange={(e) => setCounts((c) => ({ ...c, [m]: Number(e.target.value) || 0 }))}
-                  className="flex-1 bg-black border border-white/10 rounded-xl p-2.5 text-base font-black text-white outline-none focus:border-emerald-500"
-                />
-                <button
-                  onClick={() => setCounts((c) => ({ ...c, [m]: exp }))}
-                  className="px-3 py-2 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 rounded-xl text-[9px] font-black uppercase tracking-widest hover:bg-emerald-500/20"
-                >
-                  = Esperado
-                </button>
-              </div>
-              {hasInput && (
-                <div className={`mt-2 flex justify-between items-center text-xs ${
-                  diff === 0 ? "text-white/40" : diff > 0 ? "text-emerald-400" : "text-red-400"
-                }`}>
-                  <span className="font-bold uppercase tracking-widest text-[9px]">Diferencia</span>
-                  <span className="font-black">{diff >= 0 ? "+" : ""}$ {diff.toLocaleString()}</span>
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
+          {indice > 0 && (
+            <button
+              type="button"
+              onClick={() => setPaso(PASOS[indice - 1].id)}
+              className="h-12 px-4 rounded-xl bg-white/5 text-white/50 text-[10px] font-black uppercase tracking-widest shrink-0"
+            >
+              Atrás
+            </button>
+          )}
 
-      <div className={`flex justify-between items-center p-4 rounded-2xl border ${
-        totalDiff === 0 ? "bg-white/5 border-white/10 text-white/60" :
-        totalDiff > 0 ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400" :
-        "bg-red-500/10 border-red-500/30 text-red-400"
-      }`}>
-        <div>
-          <p className="text-[9px] font-black uppercase tracking-widest opacity-70">Diferencia total</p>
-          <p className="text-[10px] opacity-60">
-            Esperado ${totalExpected.toLocaleString()} · Contado ${totalCounted.toLocaleString()}
-          </p>
+          {esUltimo ? (
+            <button
+              type="button"
+              onClick={registrar}
+              disabled={guardando}
+              className="h-12 px-6 rounded-xl bg-emerald-500 text-black text-[10px] font-black uppercase tracking-widest shrink-0 disabled:opacity-40 flex items-center gap-2 active:bg-emerald-600 transition-colors"
+            >
+              {guardando && <ArrowPathIcon className="w-4 h-4 animate-spin" />}
+              Registrar cierre
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setPaso(PASOS[indice + 1].id)}
+              className="h-12 px-6 rounded-xl bg-white text-black text-[10px] font-black uppercase tracking-widest shrink-0 active:bg-white/80 transition-colors"
+            >
+              Siguiente
+            </button>
+          )}
         </div>
-        <span className="text-2xl font-black">{totalDiff >= 0 ? "+" : ""}$ {totalDiff.toLocaleString()}</span>
       </div>
-
-      <button
-        onClick={handleClose}
-        disabled={closing}
-        className={`w-full h-14 rounded-2xl flex items-center justify-center gap-2 font-black uppercase tracking-widest text-sm transition-all ${
-          closing ? "bg-white/5 text-white/20" : "bg-red-500 text-white active:bg-red-600"
-        }`}
-      >
-        {closing ? <ArrowPathIcon className="h-5 w-5 animate-spin" /> : (
-          <><LockClosedIcon className="h-5 w-5" /> Cerrar Caja</>
-        )}
-      </button>
     </div>
   );
 }
