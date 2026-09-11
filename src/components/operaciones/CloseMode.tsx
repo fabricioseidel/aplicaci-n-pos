@@ -165,6 +165,12 @@ export default function CloseMode({ onShiftChange }: { onShiftChange?: () => voi
     try {
       const via = await compartirCierre(resumen);
       if (via === "downloaded") showToast("PDF descargado ✓", "success");
+      if (via === "sin-plugins") {
+        showToast(
+          "PDF descargado. Para abrirlo directo en la impresora hay que actualizar la app.",
+          "warning"
+        );
+      }
     } catch {
       showToast("No se pudo generar el PDF", "error");
     }

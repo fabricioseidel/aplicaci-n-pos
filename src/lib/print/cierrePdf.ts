@@ -48,40 +48,53 @@ export function cierreFileName(resumen: CierreResumen): string {
   return `cierre-${resumen.shift.business_date}-${branch}.pdf`;
 }
 
+export type SalidaCierre = "shared" | "downloaded" | "sin-plugins";
+
 /**
- * Entrega el PDF al sistema: share sheet en el celular, descarga en el
- * navegador. Devuelve cómo salió para poder decirle al usuario qué pasó.
+ * Entrega el PDF al sistema: share sheet en el celular, descarga en el resto.
+ *
+ * La app Android es un cascarón que sirve el sitio en vivo desde Vercel
+ * (`server.url` en capacitor.config.ts), así que el código web llega al
+ * celular con cada deploy pero los plugins nativos sólo existen si se
+ * reconstruyó el APK. Un APK viejo corriendo el sitio nuevo tiene
+ * `isNativePlatform() === true` y los plugins sin registrar: por eso el share
+ * se intenta y se cae a la descarga, en vez de dar un error genérico.
  */
-export async function compartirCierre(resumen: CierreResumen): Promise<"shared" | "downloaded"> {
+export async function compartirCierre(resumen: CierreResumen): Promise<SalidaCierre> {
   const doc = cierreToPdf(resumen);
   const fileName = cierreFileName(resumen);
 
-  if (!Capacitor.isNativePlatform()) {
-    doc.save(fileName);
-    return "downloaded";
+  if (Capacitor.isNativePlatform()) {
+    try {
+      // Import dinámico: en el navegador estos plugins no existen y un import
+      // estático arrastraría código muerto al bundle web.
+      const [{ Filesystem, Directory }, { Share }] = await Promise.all([
+        import("@capacitor/filesystem"),
+        import("@capacitor/share"),
+      ]);
+
+      const base64 = doc.output("datauristring").split(",")[1];
+
+      const written = await Filesystem.writeFile({
+        path: fileName,
+        data: base64,
+        directory: Directory.Cache,
+      });
+
+      await Share.share({
+        title: "Cierre de caja",
+        text: `Cierre ${resumen.shift.business_date}`,
+        url: written.uri,
+        dialogTitle: "Imprimir o guardar el cierre",
+      });
+
+      return "shared";
+    } catch {
+      doc.save(fileName);
+      return "sin-plugins";
+    }
   }
 
-  // Los plugins nativos se cargan sólo dentro de la app: en el navegador no
-  // existen y un import estático arrastraría código muerto al bundle web.
-  const [{ Filesystem, Directory }, { Share }] = await Promise.all([
-    import("@capacitor/filesystem"),
-    import("@capacitor/share"),
-  ]);
-
-  const base64 = doc.output("datauristring").split(",")[1];
-
-  const written = await Filesystem.writeFile({
-    path: fileName,
-    data: base64,
-    directory: Directory.Cache,
-  });
-
-  await Share.share({
-    title: "Cierre de caja",
-    text: `Cierre ${resumen.shift.business_date}`,
-    url: written.uri,
-    dialogTitle: "Imprimir o guardar el cierre",
-  });
-
-  return "shared";
+  doc.save(fileName);
+  return "downloaded";
 }
