@@ -63,30 +63,61 @@ Recepción y Conteo hacen cosas distintas y no son intercambiables:
 | Qué hace con la cantidad | la **suma** al stock | la **fija** como el stock |
 | Para qué es | mercadería que acaba de llegar | saber qué hay de verdad en la tienda |
 | Escanear dos veces | suma dos veces | queda la última cantidad |
+| Cuándo escribe el stock | al confirmar | al cerrar el conteo (modo por defecto) |
 
 Contar con Recepción es lo que corrompió el inventario: suma lo contado sobre
 lo que el sistema ya creía tener (si decía 12 y hay 5, queda 17), y no había
 forma de decir "hay 5" ni "no hay ninguno".
 
-El flujo es:
+### El conteo es independiente de las ventas
 
-1. **Empezar conteo** — abre una sesión para la sucursal. Sólo puede haber una
-   abierta a la vez, así que dos teléfonos cuentan sobre la misma sesión y se
-   ven el avance.
+Por defecto (modo **"al cerrar el conteo"**) escanear **sólo anota**: el stock no
+se toca. La tienda sigue vendiendo con sus números todo el tiempo que dure el
+conteo, y recién al cerrar se aplica todo junto — corrigiendo producto por
+producto lo que se vendió o se recibió después de contarlo:
+
+```
+final = contado + (stock_de_ahora − stock_cuando_se_contó)
+```
+
+El paréntesis son exactamente las ventas (negativo) y las recepciones (positivo)
+posteriores al conteo. No hace falta leer `inventory_movements` para saberlo:
+`branch_stock` sólo cambia por esos movimientos, así que el propio stock lleva
+la cuenta.
+
+> Contaste 8 a las 10:00 (el sistema decía 6). Durante el día se vendieron 3, así
+> que el stock de ahora es 3. Al cerrar queda **8 + (3 − 6) = 5**: había 8, se
+> vendieron 3. Sin la corrección quedaría 8 y las tres ventas del día
+> desaparecerían del inventario.
+
+Si se vendió más de lo contado, el producto queda en 0 y el cierre lo informa
+aparte: o ese conteo ya estaba viejo, o se vendió sin stock. Conviene recontarlo.
+
+El otro modo, **"al instante"**, fija el stock en cada lote que guardas. Sirve
+para recontar unos pocos productos con la tienda cerrada y verlos corregidos ya.
+Con la tienda abierta pierde las ventas del medio, y por eso no es el default.
+
+El modo se elige al abrir el conteo y no se puede cambiar a mitad de camino.
+
+### El flujo
+
+1. **Empezar conteo** — abre una sesión para la sucursal y se elige el modo. Sólo
+   puede haber una abierta a la vez, así que dos teléfonos cuentan sobre la misma
+   sesión y se ven el avance.
 2. **Escanear y escribir la cantidad** — cada escaneo del mismo código suma una
    unidad (se cuenta pasando el lector por cada envase) y la cantidad también se
-   puede escribir. Lo que se escanea con existencias queda disponible en la
-   tienda al instante; no hay que esperar el cierre.
+   puede escribir.
 3. **Guardar** — manda el lote. La lista sin guardar vive en el teléfono
    (`localStorage`), así que cerrar la app a mitad de una góndola no la pierde.
-4. **Cerrar conteo** (sólo admin) — lo que nunca se escaneó queda en 0 y sale
-   del catálogo disponible. **Eso** es lo que define qué hay a la fecha.
+4. **Cerrar conteo** (sólo admin) — se aplica lo contado con la corrección de
+   arriba, y lo que nunca se escaneó queda en 0 y sale del catálogo disponible.
+   **Eso** es lo que define qué hay a la fecha.
 
-**No hace falta poner todo en 0 antes de empezar**, y conviene no hacerlo:
-durante el conteo la tienda sigue vendiendo y un catálogo en cero rechaza las
-ventas web. Contar y dejar que el cierre barra lo no contado llega al mismo
-resultado sin ese hueco. La opción existe igual (casilla "poner todo en 0",
-sólo admin) porque a veces se prefiere arrancar de una hoja en blanco.
+**No hace falta poner todo en 0 antes de empezar**, y con el modo independiente
+no tiene ningún sentido (la base lo rechaza): dejaría el catálogo sin
+existencias durante todo el conteo y la tienda web sin poder vender. La casilla
+existe sólo en el modo "al instante", para quien prefiera arrancar de una hoja
+en blanco con la tienda cerrada.
 
 Sin conexión el conteo sigue: el conteo abierto queda recordado en el teléfono y
 lo escaneado se encola en el outbox. Abrir y cerrar el conteo sí necesitan red.
@@ -185,7 +216,8 @@ migra esquema; se apoya en lo que ya existe:
   p_counted_by)` — **fija** cantidades exactas. Es la puerta del conteo y de los
   ajustes manuales.
 - `open_stock_count` / `stock_count_progress` / `close_stock_count` — sesión de
-  conteo físico.
+  conteo físico. El cierre es el que aplica el borrador corrigiendo las ventas
+  del medio.
 - `close_shift(p_shift_id, p_counts)` — cuadre por método de pago.
 - `v_shifts_history` — historial de turnos (`GET /api/reports/shifts`).
 

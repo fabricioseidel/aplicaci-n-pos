@@ -45,6 +45,7 @@ export async function POST(req: Request) {
       ajustados: result.ajustados,
       desconocidos: result.desconocidos,
       yaAplicada: result.yaAplicada,
+      soloAnotado: result.soloAnotado,
     });
   } catch (e) {
     return errorResponse(e);

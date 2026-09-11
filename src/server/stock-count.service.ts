@@ -8,16 +8,31 @@ import { supabaseServer } from "@/lib/supabase-server";
  * Recepción sumaba lo contado sobre lo que el sistema ya creía tener, y no
  * había forma de decir "hay 5" ni "no hay ninguno".
  *
- * Todo pasa por `apply_stock_absolute`, que:
- *  - escribe `branch_stock` (la fuente de verdad) y deja que el trigger
- *    `branch_stock_sync_products` recalcule `products.stock`;
- *  - registra el delta en `inventory_movements` con motivo `STOCK_COUNT`;
- *  - es idempotente por `opId`, así que un reintento del outbox no puede
- *    volver a mover el stock.
+ * Hay dos modos, y el que importa es el primero:
  *
- * El cierre del conteo es lo que responde "qué hay disponible a la fecha":
- * lo que nunca se escaneó queda en 0 y se desactiva.
+ * - **`ON_CLOSE` (por defecto): el conteo es independiente de las ventas.**
+ *   Escanear sólo ANOTA; el stock no se toca. La tienda sigue vendiendo con
+ *   sus números durante todo el conteo. Al cerrar se aplica todo junto y se
+ *   corrige lo que se movió en el medio:
+ *
+ *       final = contado + (stock_de_ahora − stock_cuando_se_contó)
+ *
+ *   Contaste 8 a las 10:00 (el sistema decía 6), se vendieron 3 durante el
+ *   día: al cerrar queda 5. Sin esa corrección quedaría 8 y las tres ventas
+ *   del día desaparecerían del inventario.
+ *
+ * - `LIVE`: fija el stock en cada lote. Para recontar un par de productos con
+ *   la tienda cerrada y verlos corregidos al instante.
+ *
+ * Todo pasa por `apply_stock_absolute`, que además es idempotente por `opId`:
+ * un reintento del outbox no puede volver a mover el stock.
+ *
+ * El cierre es lo que responde "qué hay disponible a la fecha": lo que nunca
+ * se escaneó queda en 0 y se desactiva.
  */
+
+/** Cómo se aplica lo contado. Ver el comentario de arriba. */
+export type CountApplyMode = "ON_CLOSE" | "LIVE";
 
 export interface CountItem {
   barcode: string;
@@ -29,6 +44,7 @@ export interface CountProgress {
   ok: boolean;
   sessionId: string;
   status: "OPEN" | "CLOSED";
+  applyMode: CountApplyMode;
   branchId: string;
   openedAt: string;
   openedBy: string | null;
@@ -42,6 +58,12 @@ export interface CountProgress {
   diferenciaNeta: number;
   /** Contados en 0. */
   enCero: number;
+  /**
+   * Productos que se vendieron o recibieron después de haberse contado. Es la
+   * vista previa de la corrección del cierre, no una alerta: en un conteo con
+   * la tienda abierta es normal que crezca durante el día.
+   */
+  movidosDesdeElConteo: number;
   /** Activos que todavía no se escanearon: los que el cierre apagaría. */
   pendientes: number;
   totalCatalogo: number;
@@ -54,18 +76,27 @@ export async function openCount({
   branchId,
   openedBy,
   zeroNow = false,
+  applyMode = "ON_CLOSE",
 }: {
   branchId?: string | null;
   openedBy?: string | null;
   zeroNow?: boolean;
+  applyMode?: CountApplyMode;
 }): Promise<
-  | { ok: true; sessionId: string; yaAbierta: boolean; puestosEnCero: number }
+  | {
+      ok: true;
+      sessionId: string;
+      yaAbierta: boolean;
+      puestosEnCero: number;
+      applyMode: CountApplyMode;
+    }
   | Fallo
 > {
   const { data, error } = await supabaseServer.rpc("open_stock_count", {
     p_branch_id: branchId ?? null,
     p_opened_by: openedBy ?? null,
     p_zero_now: zeroNow,
+    p_apply_mode: applyMode,
   });
 
   if (error) return { ok: false, error: error.message };
@@ -80,6 +111,7 @@ export async function openCount({
     sessionId: String(res.sessionId),
     yaAbierta: Boolean(res.yaAbierta),
     puestosEnCero: Number(res.puestosEnCero ?? 0),
+    applyMode: (res.applyMode === "LIVE" ? "LIVE" : "ON_CLOSE") as CountApplyMode,
   };
 }
 
@@ -146,7 +178,15 @@ export async function applyCount({
   countedBy?: string | null;
   reason?: string | null;
 }): Promise<
-  | { ok: true; aplicados: number; ajustados: number; desconocidos: string[]; yaAplicada: boolean }
+  | {
+      ok: true;
+      aplicados: number;
+      ajustados: number;
+      desconocidos: string[];
+      yaAplicada: boolean;
+      /** true si sólo se anotó: el stock se aplica al cerrar el conteo. */
+      soloAnotado: boolean;
+    }
   | Fallo
 > {
   // `qty` puede ser 0 ("no hay ninguno"), así que el filtro es por negativos
@@ -179,12 +219,17 @@ export async function applyCount({
     ajustados: Number(res.ajustados ?? 0),
     desconocidos: Array.isArray(res.desconocidos) ? (res.desconocidos as string[]) : [],
     yaAplicada: Boolean(res.yaAplicada),
+    soloAnotado: Boolean(res.soloAnotado),
   };
 }
 
 /**
- * Cierra el conteo: lo que nunca se contó queda en 0 y sale del catálogo
- * disponible. Es la operación que define "esto es lo que hay hoy".
+ * Cierra el conteo.
+ *
+ * En modo `ON_CLOSE` es acá donde se escribe el stock, corrigiendo producto por
+ * producto lo que se vendió o recibió después de contarlo. Lo que nunca se
+ * contó queda en 0 y sale del catálogo disponible. Es la operación que define
+ * "esto es lo que hay hoy".
  */
 export async function closeCount({
   sessionId,
@@ -197,7 +242,20 @@ export async function closeCount({
   zeroUncounted?: boolean;
   deactivateUncounted?: boolean;
 }): Promise<
-  { ok: true; contados: number; puestosEnCero: number; desactivados: number } | Fallo
+  | {
+      ok: true;
+      applyMode: CountApplyMode;
+      contados: number;
+      /** Productos cuyo stock se escribió al cerrar (modo borrador). */
+      aplicados: number;
+      /** De esos, cuántos se corrigieron por ventas o recepciones del medio. */
+      corregidos: number;
+      /** Se vendió más de lo contado: quedaron en 0. Vale revisarlos. */
+      enNegativo: number;
+      puestosEnCero: number;
+      desactivados: number;
+    }
+  | Fallo
 > {
   const { data, error } = await supabaseServer.rpc("close_stock_count", {
     p_session_id: sessionId,
@@ -215,7 +273,11 @@ export async function closeCount({
 
   return {
     ok: true,
+    applyMode: (res.applyMode === "LIVE" ? "LIVE" : "ON_CLOSE") as CountApplyMode,
     contados: Number(res.contados ?? 0),
+    aplicados: Number(res.aplicados ?? 0),
+    corregidos: Number(res.corregidos ?? 0),
+    enNegativo: Number(res.enNegativo ?? 0),
     puestosEnCero: Number(res.puestosEnCero ?? 0),
     desactivados: Number(res.desactivados ?? 0),
   };

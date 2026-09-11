@@ -1,7 +1,12 @@
 import { NextResponse } from "next/server";
 import { requireApiAdmin, requireApiAdminOrSeller } from "@/lib/api-auth";
 import { errorResponse } from "@/lib/api-response";
-import { countProgress, findOpenSession, openCount } from "@/server/stock-count.service";
+import {
+  countProgress,
+  findOpenSession,
+  openCount,
+  type CountApplyMode,
+} from "@/server/stock-count.service";
 
 export const dynamic = "force-dynamic";
 
@@ -33,12 +38,14 @@ export async function GET(req: Request) {
 
 /**
  * POST /api/inventario/conteo — abre el conteo de la sucursal.
- * Body: { branchId?, zeroNow? }
+ * Body: { branchId?, applyMode?, zeroNow? }
  *
- * `zeroNow` pone en cero todo el stock de la sucursal antes de empezar. Es
- * sólo de admin y NO es lo recomendado: durante el conteo la tienda sigue
- * vendiendo y un catálogo en cero rechaza las ventas web. Contar y dejar que
- * el cierre barra lo no contado llega al mismo resultado sin ese hueco.
+ * `applyMode` por defecto es `ON_CLOSE`: el conteo no toca el stock hasta
+ * cerrarse, así la tienda puede seguir vendiendo mientras se cuenta.
+ *
+ * `zeroNow` pone en cero todo el stock de la sucursal antes de empezar. Sólo
+ * de admin, sólo en modo `LIVE` (la base lo rechaza en `ON_CLOSE`) y NO es lo
+ * recomendado: deja el catálogo sin existencias durante todo el conteo.
  */
 export async function POST(req: Request) {
   const auth = await requireApiAdminOrSeller();
@@ -48,7 +55,10 @@ export async function POST(req: Request) {
     const body = (await req.json().catch(() => ({}))) as {
       branchId?: string | null;
       zeroNow?: boolean;
+      applyMode?: string;
     };
+
+    const applyMode: CountApplyMode = body.applyMode === "LIVE" ? "LIVE" : "ON_CLOSE";
 
     if (body.zeroNow) {
       const soloAdmin = await requireApiAdmin();
@@ -64,6 +74,7 @@ export async function POST(req: Request) {
       branchId: body.branchId ?? null,
       openedBy: auth.session.user?.name ?? auth.session.user?.email ?? auth.userId ?? null,
       zeroNow: Boolean(body.zeroNow),
+      applyMode,
     });
 
     if (!result.ok) return NextResponse.json({ error: result.error }, { status: 400 });
@@ -73,6 +84,7 @@ export async function POST(req: Request) {
     return NextResponse.json({
       ok: true,
       yaAbierta: result.yaAbierta,
+      applyMode: result.applyMode,
       puestosEnCero: result.puestosEnCero,
       session: progreso.ok ? progreso.progress : null,
     });

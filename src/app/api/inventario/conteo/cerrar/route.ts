@@ -57,7 +57,11 @@ export async function POST(req: Request) {
 
     return NextResponse.json({
       ok: true,
+      applyMode: result.applyMode,
       contados: result.contados,
+      aplicados: result.aplicados,
+      corregidos: result.corregidos,
+      enNegativo: result.enNegativo,
       puestosEnCero: result.puestosEnCero,
       desactivados: result.desactivados,
     });
