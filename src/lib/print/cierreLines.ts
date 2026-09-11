@@ -109,9 +109,13 @@ export function buildCierreLines(r: CierreResumen): string[] {
       if (Number(v.cash_amount) > 0) out.push(row("  Efectivo", v.cash_amount));
       out.push(row("  Total voucher", v.total_amount));
       // Un voucher cuyas partes no suman el total está mal transcrito, y eso
-      // hay que verlo en el papel archivado, no sólo en la pantalla.
+      // hay que verlo en el papel archivado, no sólo en la pantalla. Con las
+      // partes en cero no hay nada que comparar: así vienen los días
+      // importados de la planilla, que sólo traen el total del terminal.
       const desc = Number(v.total_amount) - Number(v.parts_total);
-      if (Math.abs(desc) > 0.5) out.push(row("  !! DESCUADRE", desc));
+      if (Number(v.parts_total) > 0 && Math.abs(desc) > 0.5) {
+        out.push(row("  !! DESCUADRE", desc));
+      }
     }
     out.push(row("Total tarjeta", r.vouchers.reduce((a, v) => a + Number(v.total_amount), 0)));
     out.push(rule());
