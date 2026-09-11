@@ -19,6 +19,8 @@ export async function POST(req: Request) {
       branchId?: string | null;
       reference?: string | null;
       notes?: string | null;
+      /** Clave de idempotencia del cliente (ver apiWrite.idField). */
+      opId?: string | null;
     };
 
     if (!body.items?.length) {
@@ -30,6 +32,7 @@ export async function POST(req: Request) {
       branchId: body.branchId ?? null,
       reference: body.reference ?? null,
       notes: body.notes ?? "RECEPTION",
+      opId: body.opId ?? null,
     });
 
     if (!result.ok) {

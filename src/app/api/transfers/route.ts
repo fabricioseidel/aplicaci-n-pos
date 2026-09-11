@@ -22,6 +22,8 @@ export async function POST(req: Request) {
       toBranchId?: string | null;
       reference?: string | null;
       notes?: string | null;
+      /** Clave de idempotencia del cliente (ver apiWrite.idField). */
+      opId?: string | null;
     };
 
     if (!body.items?.length) {
@@ -36,6 +38,7 @@ export async function POST(req: Request) {
       toBranchId: body.toBranchId,
       reference: body.reference ?? null,
       notes: body.notes ?? "TRANSFER",
+      opId: body.opId ?? null,
     });
 
     if (!result.ok) {

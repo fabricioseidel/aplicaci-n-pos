@@ -63,7 +63,7 @@ export default function QuickCreateReceptionModal({
 
   const handleMerge = (product: ProductUI) => {
     if (!quantity || quantity <= 0) {
-      showToast("Indica la cantidad a sumar", "error");
+      showToast("Indica la cantidad", "error");
       return;
     }
     onMerge(product, quantity);
@@ -78,7 +78,7 @@ export default function QuickCreateReceptionModal({
       return;
     }
     if (!quantity || quantity <= 0) {
-      showToast("Indica la cantidad a sumar", "error");
+      showToast("Indica la cantidad", "error");
       return;
     }
 
