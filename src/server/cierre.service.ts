@@ -43,6 +43,20 @@ export async function listarCuentas(opts?: { soloConDeuda?: boolean }): Promise<
   return (data ?? []) as CustomerBalance[];
 }
 
+/** Movimientos de una cuenta de fiado, del más reciente al más antiguo. */
+export async function movimientosDeCuenta(accountId: string) {
+  const { data, error } = await supabaseServer
+    .from("account_entries")
+    .select("id, kind, amount, occurred_on, method, note, shift_id")
+    .eq("account_id", accountId)
+    .order("occurred_on", { ascending: false })
+    .order("created_at", { ascending: false })
+    .limit(100);
+
+  if (error) throw new Error(error.message);
+  return data ?? [];
+}
+
 /** Cierres ya registrados, para el historial y el consolidado mensual. */
 export async function listarCierres(opts: {
   branchId?: string | null;
@@ -54,6 +68,10 @@ export async function listarCierres(opts: {
     .from("cash_shifts")
     .select("id, business_date, branch_id, started_at, ended_at, starting_cash, actual_cash, status, is_declared, declared_totals, pos_totals, notes")
     .eq("status", "CLOSED")
+    // Sólo cierres declarados: los turnos anteriores a este sistema se
+    // cerraron sin desglose y aparecerían como días de $0 junto a los reales,
+    // inflando la cuenta de "días con cierre" del mes.
+    .eq("is_declared", true)
     .order("business_date", { ascending: false })
     .limit(opts.limite ?? 60);
 
