@@ -62,7 +62,7 @@ Recepción y Conteo hacen cosas distintas y no son intercambiables:
 | --- | --- | --- |
 | Qué hace con la cantidad | la **suma** al stock | la **fija** como el stock |
 | Para qué es | mercadería que acaba de llegar | saber qué hay de verdad en la tienda |
-| Escanear dos veces | suma dos veces | queda la última cantidad |
+| El mismo producto en dos lugares | suma dos veces | suma las dos cantidades |
 | Cuándo escribe el stock | al confirmar | al cerrar el conteo (modo por defecto) |
 
 Contar con Recepción es lo que corrompió el inventario: suma lo contado sobre
@@ -107,11 +107,24 @@ El modo se elige al abrir el conteo y no se puede cambiar a mitad de camino.
 2. **Escanear y escribir la cantidad** — cada escaneo del mismo código suma una
    unidad (se cuenta pasando el lector por cada envase) y la cantidad también se
    puede escribir.
-3. **Guardar** — manda el lote. La lista sin guardar vive en el teléfono
+3. **Un producto en varios lugares se SUMA** — si el mismo producto está en la
+   vitrina y en la bodega, se cuenta en cada recorrido y las cantidades se
+   suman. La pantalla avisa "ya contaste N · total M" y, si lo que quieres es
+   corregir un error de tipeo en vez de sumar otro lugar, el botón **Corregir**
+   reinicia lo contado de ese producto.
+4. **Guardar** — manda el lote. La lista sin guardar vive en el teléfono
    (`localStorage`), así que cerrar la app a mitad de una góndola no la pierde.
-4. **Cerrar conteo** (sólo admin) — se aplica lo contado con la corrección de
+5. **Cerrar conteo** (sólo admin) — se aplica lo contado con la corrección de
    arriba, y lo que nunca se escaneó queda en 0 y sale del catálogo disponible.
    **Eso** es lo que define qué hay a la fecha.
+
+> **Por qué se suma y no se reemplaza.** El primer inventario real (11-sep-2026)
+> se hizo en dos recorridos, vitrina y después bodega. Cada escaneo guardado
+> reemplazaba al anterior del mismo producto, así que de 487 ítems enviados
+> quedaron 366: se perdió lo que había en vitrina de 120 productos. Nunca dejó
+> stock de más, pero sí de menos. Ahora cada escaneo guardado es una **marca**
+> (`stock_count_tags`) y lo contado de un producto es la suma de sus marcas,
+> como las tarjetas de un inventario de papel.
 
 **No hace falta poner todo en 0 antes de empezar**, y con el modo independiente
 no tiene ningún sentido (la base lo rechaza): dejaría el catálogo sin
@@ -124,12 +137,12 @@ lo escaneado se encola en el outbox. Abrir y cerrar el conteo sí necesitan red.
 
 ### Por qué no se puede duplicar
 
-- Las cantidades son **absolutas**: reenviar un lote deja el mismo número.
 - Cada lote lleva un `opId` (uuid del cliente) que la base registra en
-  `stock_ops` y descarta si ya lo aplicó. Recepción y Traspaso también lo llevan
-  desde ahora: antes, una respuesta que no llegaba por timeout —indistinguible
-  de una petición que nunca salió— hacía que el outbox reenviara una recepción
-  que sí había entrado, y el stock quedaba al doble.
+  `stock_ops`: si el lote ya se aplicó, se descarta antes de tocar nada, así que
+  reenviarlo no lo cuenta dos veces. Recepción y Traspaso también lo llevan:
+  antes, una respuesta que no llegaba por timeout —indistinguible de una
+  petición que nunca salió— hacía que el outbox reenviara una recepción que sí
+  había entrado, y el stock quedaba al doble.
 - `products.stock` tiene **un solo escritor**: es derivado de `branch_stock` y lo
   recalcula un trigger. Ni el POS ni el panel lo escriben. Por eso el campo
   "stock" de la pestaña Productos ya no escribe la columna: aplica la cantidad
@@ -218,6 +231,8 @@ migra esquema; se apoya en lo que ya existe:
 - `open_stock_count` / `stock_count_progress` / `close_stock_count` — sesión de
   conteo físico. El cierre es el que aplica el borrador corrigiendo las ventas
   del medio.
+- `stock_count_product(p_session_id, p_barcode)` — cuánto lleva contado un
+  producto en la sesión abierta, para avisarlo antes de sumar otro lugar.
 - `close_shift(p_shift_id, p_counts)` — cuadre por método de pago.
 - `v_shifts_history` — historial de turnos (`GET /api/reports/shifts`).
 

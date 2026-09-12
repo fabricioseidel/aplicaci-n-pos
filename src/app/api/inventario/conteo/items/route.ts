@@ -9,9 +9,13 @@ export const dynamic = "force-dynamic";
  * POST /api/inventario/conteo/items — registra cantidades contadas.
  * Body: { items: [{barcode, qty}], sessionId?, branchId?, opId? }
  *
- * `qty` es la cantidad REAL que hay, no un incremento. Por eso reenviar el
- * mismo lote (el outbox reintentando tras una caída de red) deja el stock
- * exactamente igual; `opId` además lo deduplica en la base.
+ * `qty` es la cantidad vista en ESTE lugar: se suma a lo que ya se haya
+ * contado de ese producto en la sesión, porque el mismo producto puede estar
+ * en la vitrina y en la bodega. `replace: true` en un ítem reinicia lo contado
+ * de ese producto (para corregir un error de tipeo, no para sumar otro lugar).
+ *
+ * `opId` deduplica el lote en la base: el outbox puede reintentarlo tras una
+ * caída de red sin que se cuente dos veces.
  */
 export async function POST(req: Request) {
   const auth = await requireApiAdminOrSeller();
@@ -46,6 +50,7 @@ export async function POST(req: Request) {
       desconocidos: result.desconocidos,
       yaAplicada: result.yaAplicada,
       soloAnotado: result.soloAnotado,
+      sumados: result.sumados,
     });
   } catch (e) {
     return errorResponse(e);

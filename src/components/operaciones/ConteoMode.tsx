@@ -45,6 +45,10 @@ interface CountProgress {
   conDiferencia: number;
   diferenciaNeta: number;
   enCero: number;
+  /** Escaneos guardados: un producto puede tener varios, uno por lugar. */
+  marcas: number;
+  /** Productos vistos en más de un lugar (se sumaron, no se pisaron). */
+  enVariosLugares: number;
   /** Productos que se vendieron o recibieron después de haberse contado. */
   movidosDesdeElConteo: number;
   pendientes: number;
@@ -55,10 +59,17 @@ interface CountProgress {
 interface Linea {
   barcode: string;
   name: string;
-  /** Cantidad contada. Es absoluta: reemplaza el stock, no lo suma. */
+  /** Cantidad vista en ESTE lugar. Se suma a lo ya contado del producto. */
   qty: number;
   /** Lo que el sistema dice que hay, para ver la diferencia en pantalla. */
   sistema: number;
+  /**
+   * Lo que ya se contó de este producto antes en la sesión (otro lugar del
+   * recorrido). `null` = no se pudo consultar (sin red); sumar funciona igual.
+   */
+  yaContado: number | null;
+  /** Reinicia lo contado del producto y deja sólo esta cantidad. */
+  reemplazar: boolean;
   byWeight: boolean;
 }
 
@@ -117,6 +128,11 @@ export default function ConteoMode() {
   const buscadorRef = useRef<HTMLInputElement>(null);
   const ultimoCodigo = useRef<string>("");
   const borradorCargado = useRef(false);
+  /**
+   * Espejo de la sesión activa para poder consultarla desde `agregar`, que se
+   * define antes de que se resuelva cuál es (y no debería depender del orden).
+   */
+  const sessionIdRef = useRef<string | null>(null);
 
   // ── Borrador local ────────────────────────────────────────────────
   // La lista de abajo vive en el teléfono hasta que se guarda. Si la app se
@@ -243,31 +259,62 @@ export default function ConteoMode() {
   };
 
   // ── Armado de la lista ────────────────────────────────────────────
-  const agregar = useCallback((product: ProductUI, cantidad?: number) => {
-    const barcode = product.barcode || product.id;
-    const paso = product.byWeight ? 0.5 : 1;
+  const agregar = useCallback(
+    (product: ProductUI, cantidad?: number) => {
+      const barcode = product.barcode || product.id;
+      const paso = product.byWeight ? 0.5 : 1;
+      let esNueva = false;
 
-    setLineas((prev) => {
-      const idx = prev.findIndex((l) => l.barcode === barcode);
-      if (idx === -1) {
-        return [
-          {
-            barcode,
-            name: product.name,
-            qty: cantidad ?? paso,
-            sistema: Number(product.stock ?? 0),
-            byWeight: Boolean(product.byWeight),
-          },
-          ...prev,
-        ];
+      setLineas((prev) => {
+        const idx = prev.findIndex((l) => l.barcode === barcode);
+        if (idx === -1) {
+          esNueva = true;
+          return [
+            {
+              barcode,
+              name: product.name,
+              qty: cantidad ?? paso,
+              sistema: Number(product.stock ?? 0),
+              yaContado: null,
+              reemplazar: false,
+              byWeight: Boolean(product.byWeight),
+            },
+            ...prev,
+          ];
+        }
+        // Volver a escanear el mismo producto suma una unidad: así se cuenta
+        // una góndola, pasando el lector por cada envase.
+        const next = [...prev];
+        next[idx] = { ...next[idx], qty: next[idx].qty + (cantidad ?? paso) };
+        return next;
+      });
+
+      // Si este producto ya se contó en otro lugar del recorrido, hay que
+      // decirlo: es la confusión que hizo perder conteos la primera vez.
+      if (esNueva && sessionIdRef.current) {
+        void (async () => {
+          try {
+            const res = await fetch(
+              `/api/inventario/conteo/producto?sessionId=${encodeURIComponent(
+                sessionIdRef.current!
+              )}&barcode=${encodeURIComponent(barcode)}`,
+              { cache: "no-store" }
+            );
+            if (!res.ok) return;
+            const data = (await res.json()) as { contado?: number };
+            const contado = Number(data.contado ?? 0);
+            if (contado <= 0) return;
+            setLineas((prev) =>
+              prev.map((l) => (l.barcode === barcode ? { ...l, yaContado: contado } : l))
+            );
+          } catch {
+            /* sin red queda en null: sumar no necesita saber el total previo */
+          }
+        })();
       }
-      // Volver a escanear el mismo producto suma una unidad: así se cuenta
-      // una góndola, pasando el lector por cada envase.
-      const next = [...prev];
-      next[idx] = { ...next[idx], qty: next[idx].qty + (cantidad ?? paso) };
-      return next;
-    });
-  }, []);
+    },
+    []
+  );
 
   const onDetected = useCallback(
     async (code: string) => {
@@ -377,6 +424,10 @@ export default function ConteoMode() {
   const sessionIdActivo =
     sesionAbierta?.sessionId ?? (sinConexion ? sesionRecordada?.sessionId ?? null : null);
 
+  useEffect(() => {
+    sessionIdRef.current = sessionIdActivo;
+  }, [sessionIdActivo]);
+
   // ── Guardar lo contado ────────────────────────────────────────────
   const guardar = async () => {
     if (lineas.length === 0 || !sessionIdActivo) return;
@@ -387,6 +438,7 @@ export default function ConteoMode() {
         ajustados: number;
         desconocidos: string[];
         soloAnotado: boolean;
+        sumados: number;
       }>({
         kind: "count",
         url: "/api/inventario/conteo/items",
@@ -394,7 +446,11 @@ export default function ConteoMode() {
         // reenviar el lote no puede sumar dos veces ni con el opId perdido.
         idField: "opId",
         payload: {
-          items: lineas.map((l) => ({ barcode: l.barcode, qty: l.qty })),
+          items: lineas.map((l) => ({
+            barcode: l.barcode,
+            qty: l.qty,
+            replace: l.reemplazar,
+          })),
           sessionId: sessionIdActivo,
           branchId: currentBranch?.id ?? null,
         },
@@ -414,10 +470,12 @@ export default function ConteoMode() {
 
       const desconocidos = res.data?.desconocidos ?? [];
       const cuantos = res.data?.aplicados ?? lineas.length;
+      const sumados = res.data?.sumados ?? 0;
       showToast(
         (res.data?.soloAnotado
           ? `${cuantos} productos anotados — el stock se aplica al cerrar`
           : `${cuantos} productos contados`) +
+          (sumados > 0 ? ` · ${sumados} se sumaron a lo ya contado` : "") +
           (desconocidos.length > 0 ? ` · ${desconocidos.length} sin catálogo` : ""),
         "success"
       );
@@ -683,6 +741,13 @@ export default function ConteoMode() {
               </>
             )}
           </p>
+          {sesionAbierta.enVariosLugares > 0 && (
+            <p className="text-xs text-white/50 leading-relaxed mt-2">
+              <strong className="text-white">{sesionAbierta.enVariosLugares}</strong>{" "}
+              {sesionAbierta.enVariosLugares === 1 ? "producto contado" : "productos contados"} en
+              más de un lugar: las cantidades se suman.
+            </p>
+          )}
         </div>
       )}
 
@@ -847,6 +912,7 @@ export default function ConteoMode() {
             {lineas.map((l) => {
               const paso = l.byWeight ? 0.5 : 1;
               const diferencia = l.qty - l.sistema;
+              const yaContado = (l.yaContado ?? 0) > 0;
               return (
                 <li
                   key={l.barcode}
@@ -856,7 +922,7 @@ export default function ConteoMode() {
                     <p className="font-black text-sm uppercase tracking-tight truncate">{l.name}</p>
                     <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest mt-0.5">
                       {l.barcode} · sistema {l.sistema}
-                      {diferencia !== 0 && (
+                      {!yaContado && diferencia !== 0 && (
                         <span className={diferencia < 0 ? "text-red-400" : "text-emerald-400"}>
                           {" "}
                           ({diferencia > 0 ? "+" : ""}
@@ -864,6 +930,39 @@ export default function ConteoMode() {
                         </span>
                       )}
                     </p>
+
+                    {/* Ya contado en otro lugar del recorrido. Es la confusión
+                        que hizo perder 121 conteos la primera vez: acá se dice
+                        en qué va a quedar el total y se ofrece corregir. */}
+                    {yaContado && (
+                      <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                        <span className="text-[10px] font-black uppercase tracking-widest text-amber-300">
+                          {l.reemplazar
+                            ? `Reemplaza los ${l.yaContado} ya contados`
+                            : `Ya contaste ${l.yaContado} · total ${
+                                l.byWeight
+                                  ? (l.yaContado! + l.qty).toFixed(2)
+                                  : l.yaContado! + l.qty
+                              }`}
+                        </span>
+                        <button
+                          onClick={() =>
+                            setLineas((prev) =>
+                              prev.map((x) =>
+                                x.barcode === l.barcode ? { ...x, reemplazar: !x.reemplazar } : x
+                              )
+                            )
+                          }
+                          className={`text-[9px] font-black uppercase tracking-widest px-2 py-1 rounded-lg border transition-colors ${
+                            l.reemplazar
+                              ? "border-amber-500/60 bg-amber-500/20 text-amber-200"
+                              : "border-white/10 bg-white/5 text-white/40"
+                          }`}
+                        >
+                          {l.reemplazar ? "Corrigiendo" : "Corregir"}
+                        </button>
+                      </div>
+                    )}
                   </div>
 
                   <div className="flex items-center justify-between sm:justify-end gap-2">
