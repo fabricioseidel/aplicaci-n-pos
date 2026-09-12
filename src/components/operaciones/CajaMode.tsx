@@ -130,6 +130,9 @@ export default function CajaMode({ onShiftChange }: { onShiftChange?: () => void
     const res = await apiWrite({
       kind: "movement",
       url: "/api/caja/movements",
+      // La base deduplica por este campo: si el outbox reenvía el movimiento
+      // porque la respuesta no llegó, no se carga la plata dos veces.
+      idField: "opId",
       payload: {
         shiftId: shift.id,
         amount: movementAmount,

@@ -136,13 +136,33 @@ export async function getCurrentShift(
   return (data as CashShift) ?? null;
 }
 
+/**
+ * Ingreso o egreso manual de dinero del turno.
+ *
+ * `client_op_id` es la clave de idempotencia: un índice único parcial en
+ * `cash_movements` la protege, así que si el outbox reenvía el movimiento
+ * porque la respuesta no llegó, el segundo insert choca y se descarta en vez
+ * de cargar la plata dos veces y descuadrar el arqueo.
+ *
+ * Devuelve `duplicado: true` cuando el movimiento ya estaba registrado, para
+ * que la ruta responda ok y el outbox lo saque de la cola.
+ */
 export async function addCashMovement(data: {
   shift_id: string;
   amount: number;
   type: "IN" | "OUT";
   reason: string;
   method?: ShiftPaymentMethod;
-}) {
-  const { error } = await supabaseServer.from("cash_movements").insert(data);
+  client_op_id?: string | null;
+}): Promise<{ duplicado: boolean }> {
+  const { error } = await supabaseServer.from("cash_movements").insert({
+    ...data,
+    client_op_id: data.client_op_id ?? null,
+  });
+
+  // 23505 = unique_violation: este mismo movimiento ya había entrado.
+  if (error?.code === "23505") return { duplicado: true };
   if (error) throw new Error(error.message);
+
+  return { duplicado: false };
 }
