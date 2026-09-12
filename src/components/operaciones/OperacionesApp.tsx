@@ -5,7 +5,6 @@ import {
   ShoppingCartIcon,
   ArchiveBoxArrowDownIcon,
   BanknotesIcon,
-  LockClosedIcon,
   ClipboardDocumentCheckIcon,
   TagIcon,
   CloudIcon,
@@ -17,20 +16,20 @@ import { useBranch } from "@/contexts/BranchContext";
 import { useOpenShift } from "@/hooks/useOpenShift";
 import SaleMode from "@/components/operaciones/SaleMode";
 import ReceptionMode from "@/components/operaciones/ReceptionMode";
-import CajaMode from "@/components/operaciones/CajaMode";
-import CloseMode from "@/components/operaciones/CloseMode";
+import CajaSection from "@/components/operaciones/CajaSection";
 import ConteoMode from "@/components/operaciones/ConteoMode";
 import ProductosMode from "@/components/operaciones/ProductosMode";
 import BranchSwitcher from "@/components/operaciones/BranchSwitcher";
 
-type OperationsMode = "VENTA" | "RECEPCION" | "CONTEO" | "CAJA" | "CIERRE" | "PRODUCTOS";
+type OperationsMode = "VENTA" | "RECEPCION" | "CONTEO" | "CAJA" | "PRODUCTOS";
 
 const TABS: { id: OperationsMode; label: string; icon: typeof ShoppingCartIcon }[] = [
   { id: "VENTA", label: "Venta", icon: ShoppingCartIcon },
   { id: "RECEPCION", label: "Recepción", icon: ArchiveBoxArrowDownIcon },
   { id: "CONTEO", label: "Conteo", icon: ClipboardDocumentCheckIcon },
+  // Caja agrupa turno, cierre, historial y fiados: seis pestañas de primer
+  // nivel a 8px no se leían en un teléfono, y el historial no tenía dónde ir.
   { id: "CAJA", label: "Caja", icon: BanknotesIcon },
-  { id: "CIERRE", label: "Cierre", icon: LockClosedIcon },
   { id: "PRODUCTOS", label: "Productos", icon: TagIcon },
 ];
 
@@ -148,8 +147,7 @@ export default function OperacionesApp() {
         )}
         {mode === "RECEPCION" && <ReceptionMode />}
         {mode === "CONTEO" && <ConteoMode />}
-        {mode === "CAJA" && <CajaMode onShiftChange={refrescarCaja} />}
-        {mode === "CIERRE" && <CloseMode onShiftChange={refrescarCaja} />}
+        {mode === "CAJA" && <CajaSection onShiftChange={refrescarCaja} />}
         {mode === "PRODUCTOS" && <ProductosMode />}
       </div>
     </div>
