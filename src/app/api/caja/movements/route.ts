@@ -10,11 +10,14 @@ type ManualMovementMethod = (typeof VALID_METHODS)[number];
 
 /**
  * POST /api/caja/movements — ingreso/egreso manual de dinero.
- * Body: { shiftId, amount, type: 'IN'|'OUT', reason, method }
+ * Body: { shiftId, amount, type: 'IN'|'OUT', reason, method, opId? }
  *
  * `method` deja anotar el movimiento en el medio real en que se movió el
  * dinero (efectivo, tarjeta, transferencia, otro) — antes todo movimiento
  * manual se contaba como efectivo aunque en realidad no lo fuera.
+ *
+ * `opId` es la clave de idempotencia del outbox: reintentar un movimiento que
+ * sí había entrado no lo carga dos veces (índice único en `cash_movements`).
  */
 export async function POST(req: Request) {
   const auth = await requireApiAdminOrSeller();
@@ -27,6 +30,7 @@ export async function POST(req: Request) {
       type?: "IN" | "OUT";
       reason?: string;
       method?: string;
+      opId?: string | null;
     };
 
     const amount = Number(body.amount);
@@ -45,15 +49,18 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Método inválido" }, { status: 400 });
     }
 
-    await addCashMovement({
+    const { duplicado } = await addCashMovement({
       shift_id: body.shiftId,
       amount,
       type: body.type,
       reason: body.reason || (body.type === "IN" ? "Ingreso manual" : "Egreso manual"),
       method,
+      client_op_id: body.opId ?? null,
     });
 
-    return NextResponse.json({ ok: true });
+    // Un reintento de algo que ya entró es un éxito, no un error: el outbox
+    // tiene que poder sacarlo de la cola.
+    return NextResponse.json({ ok: true, duplicado });
   } catch (e) {
     return errorResponse(e);
   }
