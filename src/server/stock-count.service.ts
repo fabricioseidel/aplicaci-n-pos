@@ -36,8 +36,16 @@ export type CountApplyMode = "ON_CLOSE" | "LIVE";
 
 export interface CountItem {
   barcode: string;
-  /** Cantidad contada. 0 es válido y significa "no hay ninguno". */
+  /**
+   * Cantidad vista en ESTE lugar. 0 es válido y significa "acá no hay".
+   * Se suma a lo que ya se haya contado del producto en la sesión.
+   */
   qty: number;
+  /**
+   * Reinicia lo contado de este producto en la sesión y deja sólo `qty`. Es
+   * para corregir un error de tipeo, no para contar otro lugar.
+   */
+  replace?: boolean;
 }
 
 export interface CountProgress {
@@ -58,6 +66,10 @@ export interface CountProgress {
   diferenciaNeta: number;
   /** Contados en 0. */
   enCero: number;
+  /** Escaneos guardados (un producto puede tener varios, uno por lugar). */
+  marcas: number;
+  /** Productos vistos en más de un lugar: los que antes se sobreescribían. */
+  enVariosLugares: number;
   /**
    * Productos que se vendieron o recibieron después de haberse contado. Es la
    * vista previa de la corrección del cierre, no una alerta: en un conteo con
@@ -186,6 +198,8 @@ export async function applyCount({
       yaAplicada: boolean;
       /** true si sólo se anotó: el stock se aplica al cerrar el conteo. */
       soloAnotado: boolean;
+      /** De los aplicados, cuántos se sumaron a un conteo previo del producto. */
+      sumados: number;
     }
   | Fallo
 > {
@@ -193,7 +207,11 @@ export async function applyCount({
   // y por código vacío, nunca por "cantidad falsy".
   const payload = (items ?? [])
     .filter((i) => i?.barcode && Number.isFinite(Number(i.qty)) && Number(i.qty) >= 0)
-    .map((i) => ({ barcode: String(i.barcode), qty: Number(i.qty) }));
+    .map((i) => ({
+      barcode: String(i.barcode),
+      qty: Number(i.qty),
+      replace: i.replace === true,
+    }));
 
   if (payload.length === 0) return { ok: false, error: "Ningún ítem válido" };
 
@@ -220,6 +238,36 @@ export async function applyCount({
     desconocidos: Array.isArray(res.desconocidos) ? (res.desconocidos as string[]) : [],
     yaAplicada: Boolean(res.yaAplicada),
     soloAnotado: Boolean(res.soloAnotado),
+    sumados: Number(res.sumados ?? 0),
+  };
+}
+
+/**
+ * Cuánto lleva contado un producto en la sesión abierta.
+ *
+ * Es sólo informativo —sumar no necesita saber el total previo, y por eso el
+ * conteo sigue siendo correcto sin conexión—, pero en pantalla evita la duda
+ * de "¿esto ya lo conté?" cuando el mismo producto está en dos lugares.
+ */
+export async function countedProduct({
+  sessionId,
+  barcode,
+}: {
+  sessionId: string;
+  barcode: string;
+}): Promise<{ ok: true; contado: number; marcas: number } | Fallo> {
+  const { data, error } = await supabaseServer.rpc("stock_count_product", {
+    p_session_id: sessionId,
+    p_barcode: barcode,
+  });
+
+  if (error) return { ok: false, error: error.message };
+
+  const res = (data ?? {}) as Record<string, unknown>;
+  return {
+    ok: true,
+    contado: Number(res.contado ?? 0),
+    marcas: Number(res.marcas ?? 0),
   };
 }
 
