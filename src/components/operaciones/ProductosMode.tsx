@@ -7,7 +7,7 @@ import {
 } from "@heroicons/react/24/outline";
 import { useToast } from "@/contexts/ToastContext";
 import { useProductCatalog } from "@/hooks/useProductCatalog";
-import { saveProduct, DEFAULT_IMAGE } from "@/services/products";
+import { saveProduct, DEFAULT_IMAGE, ProductExistsError } from "@/services/products";
 import UnifiedScanner from "@/components/scanner/UnifiedScanner";
 import type { ProductUI } from "@/types";
 import { searchProducts } from "@/lib/pos/search";
@@ -21,6 +21,8 @@ interface FormState {
   price: string;
   offerPrice: string;
   stock: string;
+  /** Stock al abrir la ficha: si no se cambió, guardar no lo toca. */
+  stockOriginal: string;
   byWeight: boolean;
   measurementUnit: string;
   imageUrl: string;
@@ -34,6 +36,7 @@ const EMPTY_FORM: FormState = {
   price: "",
   offerPrice: "",
   stock: "0",
+  stockOriginal: "0",
   byWeight: false,
   measurementUnit: "kg",
   imageUrl: "",
@@ -48,6 +51,7 @@ function toForm(p: ProductUI): FormState {
     price: String(p.price ?? ""),
     offerPrice: p.offerPrice ? String(p.offerPrice) : "",
     stock: String(p.stock ?? 0),
+    stockOriginal: String(p.stock ?? 0),
     byWeight: Boolean(p.byWeight),
     measurementUnit: p.measurementUnit || "kg",
     imageUrl: p.image && p.image !== DEFAULT_IMAGE ? p.image : "",
@@ -86,6 +90,21 @@ export default function ProductosMode() {
     setIsNew(false);
   };
 
+  /** Abre la ficha de un código existente, incluidos los desactivados. */
+  const abrirExistente = async (barcode: string): Promise<boolean> => {
+    try {
+      const res = await fetch(`/api/inventario/buscar?barcode=${encodeURIComponent(barcode)}`, {
+        cache: "no-store",
+      });
+      const data = (await res.json()) as { producto?: ProductUI | null };
+      if (!res.ok || !data.producto) return false;
+      startEdit(data.producto);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
   const patch = (p: Partial<FormState>) =>
     setEditing((prev) => (prev ? { ...prev, ...p } : prev));
 
@@ -108,23 +127,31 @@ export default function ProductosMode() {
     const stock = Number(editing.stock);
     if (!Number.isFinite(stock) || stock < 0) return showToast("Stock inválido", "error");
 
+    // El stock sólo viaja si se cambió a mano: reenviar el que mostraba la
+    // pantalla revertía las ventas hechas mientras la ficha estaba abierta.
+    const stockOriginal = Number(editing.stockOriginal);
+    const stockCambiado = isNew || stock !== stockOriginal;
+
     setSaving(true);
     try {
       // Guardar producto NO se encola offline: el catálogo es dato compartido
       // y resolver conflictos de dos ediciones diferidas no vale la pena. Sin
       // red, el guardado falla y avisa.
-      await saveProduct({
-        barcode,
-        name,
-        category: editing.category.trim() || null,
-        sale_price: price,
-        offer_price: offerPrice,
-        stock,
-        by_weight: editing.byWeight,
-        measurement_unit: editing.byWeight ? editing.measurementUnit || "kg" : null,
-        image_url: editing.imageUrl.trim() || null,
-        is_active: editing.isActive,
-      });
+      const { stockError } = await saveProduct(
+        {
+          barcode,
+          name,
+          category: editing.category.trim() || null,
+          sale_price: price,
+          offer_price: offerPrice,
+          ...(stockCambiado ? { stock } : {}),
+          by_weight: editing.byWeight,
+          measurement_unit: editing.byWeight ? editing.measurementUnit || "kg" : null,
+          image_url: editing.imageUrl.trim() || null,
+          is_active: editing.isActive,
+        },
+        isNew ? { crear: true } : stockCambiado ? { stockAnterior: stockOriginal } : {}
+      );
 
       upsertLocal({
         id: barcode,
@@ -145,10 +172,24 @@ export default function ProductosMode() {
         isActive: editing.isActive,
       });
 
-      showToast(isNew ? `Producto creado: ${name}` : `Producto actualizado: ${name}`, "success");
+      if (stockError) showToast(stockError, "warning", 6000);
+      else showToast(isNew ? `Producto creado: ${name}` : `Producto actualizado: ${name}`, "success");
       setEditing(null);
       void refresh();
     } catch (e) {
+      if (e instanceof ProductExistsError) {
+        // "Nuevo" con un código que ya existe (muchas veces desactivado, por
+        // eso no aparecía en la lista): se abre esa ficha en vez de pisarla.
+        const existente = await abrirExistente(e.existente.barcode);
+        showToast(
+          existente
+            ? `${e.message}. Te abrí su ficha${e.existente.isActive ? "" : ": actívalo y guarda"}.`
+            : e.message,
+          "warning",
+          6000
+        );
+        return;
+      }
       showToast(e instanceof Error ? e.message : "Error al guardar", "error");
     } finally {
       setSaving(false);

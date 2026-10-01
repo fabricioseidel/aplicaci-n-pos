@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { BoltIcon, XMarkIcon, ArrowPathIcon, ArrowsRightLeftIcon } from "@heroicons/react/24/outline";
-import { saveProduct, DEFAULT_IMAGE } from "@/services/products";
+import { saveProduct, DEFAULT_IMAGE, ProductExistsError, usarProductoExistente } from "@/services/products";
 import { useToast } from "@/contexts/ToastContext";
 import { searchProducts } from "@/lib/pos/search";
 import type { ProductUI } from "@/types";
@@ -86,13 +86,12 @@ export default function QuickCreateReceptionModal({
 
     setSaving(true);
     try {
-      await saveProduct({
-        barcode: trimmedBarcode,
-        name: trimmedName,
-        sale_price: 0,
-        stock: 0,
-        is_active: true,
-      });
+      // Sin stock: el alta entra con 0 y la cantidad la suma la recepción
+      // misma. Mandar `stock: 0` sobre un código existente lo vaciaba.
+      await saveProduct(
+        { barcode: trimmedBarcode, name: trimmedName, is_active: true },
+        { crear: true }
+      );
 
       const product: ProductUI = {
         id: trimmedBarcode,
@@ -112,6 +111,18 @@ export default function QuickCreateReceptionModal({
       showToast(`Producto creado: ${trimmedName}`, "success");
       onCreated(product, quantity);
     } catch (err) {
+      if (err instanceof ProductExistsError) {
+        const existente = await usarProductoExistente(err.existente.barcode).catch(() => null);
+        if (existente) {
+          showToast(
+            `${err.message}${err.existente.isActive ? "" : ": lo reactivé"} y le sumé la cantidad`,
+            "warning",
+            5000
+          );
+          onMerge(existente, quantity);
+          return;
+        }
+      }
       showToast(err instanceof Error ? err.message : "Error al crear el producto", "error");
     } finally {
       setSaving(false);

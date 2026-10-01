@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { BoltIcon, XMarkIcon, ArrowPathIcon } from "@heroicons/react/24/outline";
-import { saveProduct } from "@/services/products";
+import { saveProduct, ProductExistsError, usarProductoExistente } from "@/services/products";
 import { useToast } from "@/contexts/ToastContext";
 import { DEFAULT_IMAGE } from "@/services/products";
 import type { ProductUI } from "@/types";
@@ -57,7 +57,7 @@ export default function QuickCreateProductModal({
         by_weight: byWeight,
         measurement_unit: byWeight ? "kg" : null,
         is_active: true,
-      });
+      }, { crear: true });
 
       const product: ProductUI = {
         id: trimmedBarcode,
@@ -78,6 +78,18 @@ export default function QuickCreateProductModal({
       showToast(`Producto creado: ${trimmedName}`, "success");
       onCreated(product);
     } catch (err) {
+      if (err instanceof ProductExistsError) {
+        const existente = await usarProductoExistente(err.existente.barcode).catch(() => null);
+        if (existente) {
+          showToast(
+            `${err.message}${err.existente.isActive ? "" : ": lo reactivé"} y lo agregué`,
+            "warning",
+            5000
+          );
+          onCreated(existente);
+          return;
+        }
+      }
       showToast(err instanceof Error ? err.message : "Error al crear el producto", "error");
     } finally {
       setSaving(false);
