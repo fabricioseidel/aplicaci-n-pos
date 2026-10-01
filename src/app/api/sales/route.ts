@@ -124,9 +124,10 @@ export async function POST(req: Request) {
             },
           ];
 
-    // La compra propia se le carga al empleado que compra: es lo que agrupa la
-    // liquidación de fin de mes. Ventas encoladas por una versión anterior
-    // de la app llegan sin `staffSellerId` y se registran como antes.
+    // La compra propia se le carga al empleado que compra, nunca a la sesión:
+    // el teléfono del mostrador lo usan varias personas con la cuenta de
+    // quien abrió la caja. Ventas encoladas por una versión anterior de la
+    // app llegan sin `staffSellerId` y se registran como antes.
     const sessionName = auth.session.user?.name ?? "POS";
     let buyer: { id: string; name: string } | null = null;
     if (body.isStaffPurchase && body.staffSellerId) {
@@ -151,7 +152,7 @@ export async function POST(req: Request) {
       total: body.total,
       discount: body.discount ?? 0,
       tax: body.tax ?? 0,
-      notes: body.notes ?? (buyer ? `Registrada por ${sessionName}` : null),
+      notes: body.notes ?? null,
       cashReceived: body.cashReceived ?? 0,
       changeGiven: body.changeGiven ?? 0,
       sellerName: buyer?.name ?? sessionName,
