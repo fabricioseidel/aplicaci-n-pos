@@ -34,6 +34,11 @@ interface SaleRequestBody {
   /** La compra de personal queda por cobrar (se descuenta del sueldo). */
   staffUnpaid?: boolean;
   staffDiscountRate?: number;
+  /**
+   * `sellers.id` del empleado que compra. No se deduce de la sesión: la cuenta
+   * del mostrador se comparte y quien cobra no siempre es quien compra.
+   */
+  staffSellerId?: string | null;
   /** UUID generado en el cliente. Idempotencia de la cola offline. */
   clientSaleId?: string;
 }
@@ -119,17 +124,38 @@ export async function POST(req: Request) {
             },
           ];
 
+    // La compra propia se le carga al empleado que compra: es lo que agrupa la
+    // liquidación de fin de mes. Ventas encoladas por una versión anterior
+    // de la app llegan sin `staffSellerId` y se registran como antes.
+    const sessionName = auth.session.user?.name ?? "POS";
+    let buyer: { id: string; name: string } | null = null;
+    if (body.isStaffPurchase && body.staffSellerId) {
+      const { data: seller, error: sellerErr } = await supabaseServer
+        .from("sellers")
+        .select("id, name")
+        .eq("id", body.staffSellerId)
+        .maybeSingle();
+      if (sellerErr) throw sellerErr;
+      if (!seller) {
+        return NextResponse.json(
+          { error: "El empleado elegido para la compra propia no existe" },
+          { status: 400 }
+        );
+      }
+      buyer = seller as { id: string; name: string };
+    }
+
     const result = await createSale({
       branchId: body.branchId ?? null,
       shiftId,
       total: body.total,
       discount: body.discount ?? 0,
       tax: body.tax ?? 0,
-      notes: body.notes ?? null,
+      notes: body.notes ?? (buyer ? `Registrada por ${sessionName}` : null),
       cashReceived: body.cashReceived ?? 0,
       changeGiven: body.changeGiven ?? 0,
-      sellerName: auth.session.user?.name ?? "POS",
-      sellerId: await resolveSellerId(auth.userId),
+      sellerName: buyer?.name ?? sessionName,
+      sellerId: buyer?.id ?? (await resolveSellerId(auth.userId)),
       transferReceiptUri: body.transferReceiptUri ?? null,
       transferReceiptName: body.transferReceiptName ?? null,
       isStaffPurchase: body.isStaffPurchase ?? false,

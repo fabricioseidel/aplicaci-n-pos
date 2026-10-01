@@ -6,6 +6,7 @@ import { useBranch } from "@/contexts/BranchContext";
 import { useToast } from "@/contexts/ToastContext";
 import { useSync } from "@/contexts/SyncContext";
 import { useProductCatalog } from "@/hooks/useProductCatalog";
+import { useStaff, staffDisplayName, type StaffMember } from "@/hooks/useStaff";
 import { ProductUI } from "@/types";
 import { STAFF_DISCOUNT_RATE, type PosPaymentMethod } from "@/lib/pos/payments";
 import { searchProducts } from "@/lib/pos/search";
@@ -59,6 +60,9 @@ export default function SaleMode({ shiftId }: SaleModeProps) {
   const [view, setView] = useState<"products" | "cart">("products");
   const [compraPropia, setCompraPropia] = useState(false);
   const [porCobrar, setPorCobrar] = useState(false);
+  /** Empleado al que se le carga la compra propia (no siempre quien cobra). */
+  const [comprador, setComprador] = useState<StaffMember | null>(null);
+  const { staff } = useStaff();
   const [visibleCount, setVisibleCount] = useState(PRODUCTS_PER_PAGE);
   /** Producto por peso esperando que el cajero ingrese los gramos. */
   const [weighing, setWeighing] = useState<{ product: ProductUI; initialKg?: number } | null>(null);
@@ -92,6 +96,8 @@ export default function SaleMode({ shiftId }: SaleModeProps) {
   const paymentsOk = porCobrar
     ? true
     : Math.abs(paymentSum - change - finalTotal) < 0.01 && paymentSum >= finalTotal;
+  // Una compra propia sin dueño no se puede liquidar a fin de mes.
+  const faltaComprador = compraPropia && !comprador;
 
   const products = useMemo(
     () => searchProducts(allProducts, searchQuery),
@@ -143,11 +149,16 @@ export default function SaleMode({ shiftId }: SaleModeProps) {
     setPayments([{ id: "p1", method: "CASH", amount: 0 }]);
     setCompraPropia(false);
     setPorCobrar(false);
+    setComprador(null);
     setView("products");
   };
 
   const handleCheckout = async () => {
     if (cart.length === 0 || processing) return;
+    if (faltaComprador) {
+      showToast("Elige de quién es la compra propia", "error");
+      return;
+    }
     if (!paymentsOk) {
       showToast(remaining > 0 ? `Faltan $${remaining.toLocaleString()}` : "Pagos inválidos", "error");
       return;
@@ -195,6 +206,7 @@ export default function SaleMode({ shiftId }: SaleModeProps) {
           isStaffPurchase: compraPropia,
           staffUnpaid: compraPropia && porCobrar,
           staffDiscountRate: compraPropia ? STAFF_DISCOUNT_RATE : undefined,
+          staffSellerId: compraPropia ? comprador?.id : undefined,
           ...(porCobrar ? {} : { payments: payloadPayments }),
           items: cart.map((item) => ({
             barcode: item.id,
@@ -207,13 +219,19 @@ export default function SaleMode({ shiftId }: SaleModeProps) {
         },
       });
 
+      const dueno = compraPropia && comprador ? staffDisplayName(comprador.name) : null;
       if (result.ok && result.queued) {
         resetSale();
         await refreshPending();
         showToast("Venta guardada sin conexión — se sincronizará", "warning", 5000);
       } else if (result.ok) {
         resetSale();
-        showToast("✓ Venta registrada", "success");
+        showToast(
+          dueno
+            ? `✓ Compra de ${dueno} registrada${porCobrar ? " (por cobrar)" : ""}`
+            : "✓ Venta registrada",
+          "success"
+        );
       } else {
         showToast(result.error || "Error en la venta", "error");
       }
@@ -424,7 +442,7 @@ export default function SaleMode({ shiftId }: SaleModeProps) {
               {compraPropia && (
                 <div className="flex justify-between items-center text-sm">
                   <span className="text-[10px] font-black uppercase tracking-widest text-amber-400">
-                    Compra propia −{Math.round(STAFF_DISCOUNT_RATE * 100)}%
+                    Compra propia{comprador ? ` de ${staffDisplayName(comprador.name)}` : ""} −{Math.round(STAFF_DISCOUNT_RATE * 100)}%
                   </span>
                   <span className="text-amber-400 font-black">- $ {discount.toLocaleString()}</span>
                 </div>
@@ -440,7 +458,10 @@ export default function SaleMode({ shiftId }: SaleModeProps) {
                 onClick={() => {
                   const activando = !compraPropia;
                   setCompraPropia(activando);
-                  if (!activando) setPorCobrar(false);
+                  if (!activando) {
+                    setPorCobrar(false);
+                    setComprador(null);
+                  }
                 }}
                 className={`w-full rounded-xl border px-4 py-3 text-[11px] font-black uppercase tracking-widest transition-colors ${
                   compraPropia
@@ -450,6 +471,40 @@ export default function SaleMode({ shiftId }: SaleModeProps) {
               >
                 {compraPropia ? "✓ Compra propia activa" : "Compra propia (−25%)"}
               </button>
+
+              {compraPropia && (
+                <div className="space-y-2">
+                  <p className={`text-[10px] font-black uppercase tracking-widest ${comprador ? "text-amber-300/70" : "text-amber-400"}`}>
+                    ¿De quién es la compra?
+                  </p>
+                  {staff.length === 0 ? (
+                    <p className="text-[11px] text-red-300">
+                      No se pudo cargar la lista de empleados. Conéctate a internet y reintenta.
+                    </p>
+                  ) : (
+                    <div className="grid grid-cols-3 gap-2">
+                      {staff.map((s) => {
+                        const activo = comprador?.id === s.id;
+                        return (
+                          <button
+                            key={s.id}
+                            type="button"
+                            aria-pressed={activo}
+                            onClick={() => setComprador(activo ? null : s)}
+                            className={`rounded-xl border px-2 py-3 text-xs font-black transition-colors ${
+                              activo
+                                ? "bg-amber-500 border-amber-500 text-black"
+                                : "bg-black/40 border-amber-500/30 text-amber-100"
+                            }`}
+                          >
+                            {staffDisplayName(s.name)}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
 
               {compraPropia && (
                 <label className="flex items-center gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3">
@@ -537,7 +592,7 @@ export default function SaleMode({ shiftId }: SaleModeProps) {
                 </div>
               </div>
 
-              <div className={`flex justify-between items-center p-3 rounded-xl border text-sm ${
+              <div className={`flex justify-between items-center p-3 rounded-xl border text-sm ${porCobrar ? "hidden" : ""} ${
                 remaining > 0 ? "bg-red-500/10 border-red-500/30 text-red-400" :
                 change > 0 ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400" :
                 "bg-white/5 border-white/10 text-white/40"
@@ -552,12 +607,14 @@ export default function SaleMode({ shiftId }: SaleModeProps) {
 
               <button
                 onClick={handleCheckout}
-                disabled={cart.length === 0 || processing || !paymentsOk}
+                disabled={cart.length === 0 || processing || !paymentsOk || faltaComprador}
                 className={`w-full h-14 rounded-2xl flex items-center justify-center gap-2 text-sm font-black uppercase tracking-widest transition-all ${
-                  processing || !paymentsOk ? "bg-white/5 text-white/20" : "bg-emerald-500 text-black active:bg-emerald-600"
+                  processing || !paymentsOk || faltaComprador ? "bg-white/5 text-white/20" : "bg-emerald-500 text-black active:bg-emerald-600"
                 }`}
               >
-                {processing ? <ArrowPathIcon className="h-5 w-5 animate-spin" /> : (
+                {processing ? <ArrowPathIcon className="h-5 w-5 animate-spin" /> : faltaComprador ? (
+                  "Elige de quién es la compra"
+                ) : (
                   <><CheckCircleIcon className="h-5 w-5" /> Confirmar Venta</>
                 )}
               </button>

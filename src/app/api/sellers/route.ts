@@ -17,6 +17,7 @@ export async function GET() {
     const { data: sellersData, error: sellersError } = await supabaseServer
       .from("sellers")
       .select("id, name, user_id")
+      .eq("active", true)
       .order("name");
 
     if (sellersError) throw sellersError;
