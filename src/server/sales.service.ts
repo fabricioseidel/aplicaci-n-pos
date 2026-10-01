@@ -68,7 +68,10 @@ export interface CreateSaleInput {
   sellerId?: string | null;
   transferReceiptUri?: string | null;
   transferReceiptName?: string | null;
-  /** Compra de personal (descuento fijo, asociada al vendedor). */
+  /**
+   * Compra de personal (descuento fijo). En ese caso `sellerId`/`sellerName`
+   * son los del empleado que compra, y `seller_name` también se guarda.
+   */
   isStaffPurchase?: boolean;
   /** Tasa de descuento del personal vigente al registrar la venta. */
   staffDiscountRate?: number;
@@ -155,6 +158,9 @@ export async function createSale(input: CreateSaleInput): Promise<{ id: number }
       .update({
         ...(input.sellerId ? { seller_id: input.sellerId } : {}),
         ...(input.isStaffPurchase ? { is_staff_purchase: true } : {}),
+        // apply_sale no escribe seller_name; sin él la liquidación de fin de
+        // mes muestra "Sin vendedor" aunque haya seller_id.
+        ...(input.isStaffPurchase && input.sellerName ? { seller_name: input.sellerName } : {}),
         ...(input.staffDiscountRate !== undefined
           ? { staff_discount_rate: input.staffDiscountRate }
           : {}),
