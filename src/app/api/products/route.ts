@@ -5,38 +5,48 @@ import { errorResponse, successResponse } from "@/lib/api-response";
 import { mapSupaToUI, PRODUCT_COLUMNS } from "@/services/products";
 import { applyCount, type CountItem } from "@/server/stock-count.service";
 import type { SupaProduct } from "@/types";
+import { codigosConCostoDeProveedor, filaParaRol } from "@/server/productos.service";
 
 export const dynamic = "force-dynamic";
 
 /**
  * GET /api/products — catálogo completo para el POS.
+ * GET /api/products?estado=inactivos — sólo los desactivados (filtro
+ * "Inactivos" de Productos, para poder reactivarlos: antes desaparecían).
  *
  * A diferencia del catálogo público de la tienda, acá NO se filtra por
  * "producto visible" (foto + categoría + precio): en el mostrador hay que
  * poder cobrar un producto aunque le falte la foto. Sólo se excluyen los
  * explícitamente inactivos.
  *
+ * Costos y márgenes sólo para ADMIN (misma política que OlivoWeb). Al ADMIN se
+ * le dice además qué productos tienen el costo fijado por un proveedor.
+ *
  * El service worker cachea esta respuesta (NetworkFirst) para que el catálogo
  * siga navegable sin conexión.
  */
-export async function GET() {
+export async function GET(req: Request) {
   const auth = await requireApiAdminOrSeller();
   if (!auth.ok) return auth.response;
 
   try {
-    const { data, error } = await supabaseServer
-      .from("products")
-      .select(PRODUCT_COLUMNS)
-      // `is_active IS NULL` cuenta como activo (registros antiguos). Un
-      // `.neq("is_active", false)` los dejaría fuera, porque en SQL
-      // `NULL != false` no es true.
-      .or("is_active.is.null,is_active.eq.true")
-      .order("updated_at", { ascending: false })
-      .limit(5000);
+    const inactivos = new URL(req.url).searchParams.get("estado") === "inactivos";
+
+    let q = supabaseServer.from("products").select(PRODUCT_COLUMNS);
+    // `is_active IS NULL` cuenta como activo (registros antiguos). Un
+    // `.neq("is_active", false)` los dejaría fuera, porque en SQL
+    // `NULL != false` no es true.
+    q = inactivos ? q.eq("is_active", false) : q.or("is_active.is.null,is_active.eq.true");
+    const { data, error } = await q.order("updated_at", { ascending: false }).limit(5000);
 
     if (error) throw error;
 
-    const items = ((data ?? []) as unknown as SupaProduct[]).map(mapSupaToUI);
+    const filas = (data ?? []) as unknown as Array<SupaProduct & Record<string, unknown>>;
+    const conProveedor = auth.role === "ADMIN" ? await codigosConCostoDeProveedor() : null;
+    const items = filas.map((f) => {
+      const p = mapSupaToUI(filaParaRol(f, auth.role) as SupaProduct);
+      return conProveedor ? { ...p, costoProveedor: conProveedor.has(String(f.barcode)) } : p;
+    });
     return NextResponse.json({ items });
   } catch (e) {
     return errorResponse(e);
@@ -49,14 +59,19 @@ export async function GET() {
  * Evita que un despliegue de la base fuera de fase tumbe la creación de
  * productos desde el mostrador.
  */
-async function upsertProductsWithColumnFallback(payloadsInput: Record<string, unknown>[]) {
+async function upsertProductsWithColumnFallback(
+  payloadsInput: Record<string, unknown>[],
+  soloAlta = false
+) {
   let payloads = payloadsInput.map((p) => ({ ...p }));
   let lastError: unknown;
 
   for (let attempt = 0; attempt < 8; attempt++) {
-    const { error } = await supabaseServer
-      .from("products")
-      .upsert(payloads, { onConflict: "barcode" });
+    // Un alta va con INSERT: si entre la verificación y la escritura alguien
+    // creó el mismo código, choca (23505) en vez de pisarlo.
+    const { error } = soloAlta
+      ? await supabaseServer.from("products").insert(payloads)
+      : await supabaseServer.from("products").upsert(payloads, { onConflict: "barcode" });
     if (!error) return;
 
     lastError = error;
@@ -216,7 +231,18 @@ export async function POST(req: Request) {
 
     // Los productos primero: `apply_stock_absolute` ignora los códigos que no
     // existen todavía, así que un alta con stock necesita este orden.
-    await upsertProductsWithColumnFallback(payloads);
+    const soloAlta = items.every((i) => i.crear === true);
+    try {
+      await upsertProductsWithColumnFallback(payloads, soloAlta);
+    } catch (e) {
+      if (soloAlta && (e as { code?: string })?.code === "23505") {
+        return NextResponse.json(
+          { error: "Ese código ya existe", existente: { barcode: barcodes[0], name: null, isActive: true } },
+          { status: 409 }
+        );
+      }
+      throw e;
+    }
 
     let stockAplicado = 0;
     let stockError: string | null = avisos.length > 0 ? avisos.join(". ") : null;

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import type { ProductUI } from "@/types";
-import { cacheProducts, readCachedProducts } from "@/lib/offline/db";
+import { cacheProduct, cacheProducts, readCachedProducts } from "@/lib/offline/db";
 
 interface CatalogState {
   products: ProductUI[];
@@ -11,7 +11,11 @@ interface CatalogState {
   fromCache: boolean;
   error: string | null;
   refresh: () => Promise<void>;
-  /** Inserta/actualiza un producto en memoria (tras crearlo o editarlo). */
+  /**
+   * Inserta/actualiza un producto tras crearlo o editarlo, en memoria y en la
+   * caché offline (uno desactivado sale de la caché; en memoria se deja, porque
+   * Conteo agrega desactivados que se reactivan al contarlos).
+   */
   upsertLocal: (product: ProductUI) => void;
 }
 
@@ -77,6 +81,9 @@ export function useProductCatalog(): CatalogState {
   }, [refresh]);
 
   const upsertLocal = useCallback((product: ProductUI) => {
+    void cacheProduct(product).catch(() => {
+      /* sin IndexedDB: la próxima descarga del catálogo lo corrige */
+    });
     setProducts((prev) => {
       const idx = prev.findIndex((p) => p.id === product.id);
       if (idx === -1) return [product, ...prev];
