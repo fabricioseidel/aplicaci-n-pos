@@ -49,7 +49,7 @@ export default function CajaSection({
               type="button"
               onClick={() => setApartado(id)}
               aria-current={apartado === id ? "page" : undefined}
-              className={`flex-1 flex items-center justify-center gap-1.5 h-10 rounded-xl text-[10px] font-black uppercase tracking-widest transition-colors ${
+              className={`flex-1 flex items-center justify-center gap-1.5 h-12 rounded-xl text-[11px] font-black uppercase tracking-widest transition-colors ${
                 apartado === id
                   ? "bg-emerald-500 text-black"
                   : "text-white/40 active:text-white/70"

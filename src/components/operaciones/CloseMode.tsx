@@ -335,7 +335,7 @@ export default function CloseMode({
               type="button"
               onClick={() => setPaso(id)}
               aria-current={paso === id ? "step" : undefined}
-              className={`flex-1 flex flex-col items-center gap-1 py-2.5 text-[8px] font-black uppercase tracking-widest border-b-2 transition-colors ${
+              className={`flex-1 flex flex-col items-center justify-center gap-1 min-h-14 py-2 text-[10px] font-black uppercase tracking-widest border-b-2 transition-colors ${
                 paso === id
                   ? "border-emerald-500 text-emerald-400"
                   : i < indice
