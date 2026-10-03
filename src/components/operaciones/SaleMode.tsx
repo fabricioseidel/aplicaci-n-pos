@@ -7,6 +7,7 @@ import { useToast } from "@/contexts/ToastContext";
 import { useSync } from "@/contexts/SyncContext";
 import { useProductCatalog } from "@/hooks/useProductCatalog";
 import { useStaff, staffDisplayName } from "@/hooks/useStaff";
+import { useAttendant } from "@/hooks/useAttendant";
 import { ProductUI } from "@/types";
 import { STAFF_DISCOUNT_RATE, PAYMENT_LABELS, type PosPaymentMethod } from "@/lib/pos/payments";
 import {
@@ -72,6 +73,7 @@ export default function SaleMode({ shiftId }: SaleModeProps) {
   const { refreshPending } = useSync();
   const { products: allProducts, loading, fromCache, upsertLocal } = useProductCatalog();
   const { staff } = useStaff();
+  const { attendant } = useAttendant();
   const feedback = useScanFeedback();
 
   const [searchQuery, setSearchQuery] = useState("");
@@ -295,6 +297,8 @@ export default function SaleMode({ shiftId }: SaleModeProps) {
           staffUnpaid: compraPropia && porCobrar,
           staffDiscountRate: compraPropia ? STAFF_DISCOUNT_RATE : undefined,
           staffSellerId: compraPropia ? comprador?.id : undefined,
+          // Quién cobró, elegido en el teléfono: no la sesión de la mañana.
+          attendantSellerId: attendant?.id,
           ...(porCobrar ? {} : { payments: pagosParaServidor(finalTotal, filas) }),
           items: cart.map((item) => ({
             barcode: item.id,

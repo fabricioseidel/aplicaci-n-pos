@@ -39,6 +39,8 @@ interface SaleRequestBody {
    * del mostrador se comparte y quien cobra no siempre es quien compra.
    */
   staffSellerId?: string | null;
+  /** `sellers.id` de quien atiende (selector "¿Quién atiende?"). */
+  attendantSellerId?: string | null;
   /** UUID generado en el cliente. Idempotencia de la cola offline. */
   clientSaleId?: string;
   /** Hora real de la venta en el teléfono (ISO). Sin red se sincroniza después. */
@@ -190,6 +192,18 @@ export async function POST(req: Request) {
       buyer = seller as { id: string; name: string };
     }
 
+    // Quien cobró. Si el id no existe (o es de una versión vieja) se ignora y
+    // queda como antes: lo resuelve la sesión.
+    let attendant: { id: string; name: string } | null = null;
+    if (body.attendantSellerId) {
+      const { data: s } = await supabaseServer
+        .from("sellers")
+        .select("id, name")
+        .eq("id", body.attendantSellerId)
+        .maybeSingle();
+      attendant = (s as { id: string; name: string } | null) ?? null;
+    }
+
     const result = await createSale({
       branchId: body.branchId ?? null,
       shiftId,
@@ -197,14 +211,18 @@ export async function POST(req: Request) {
       discount: body.discount ?? 0,
       tax: body.tax ?? 0,
       notes:
-        [body.notes, sinPrecio.length > 0 ? `Línea sin precio: ${sinPrecio.map((it) => it.name ?? it.barcode).join(", ")}` : null]
+        [body.notes,
+          buyer && attendant && attendant.id !== buyer.id ? `Atendió: ${attendant.name}` : null, sinPrecio.length > 0 ? `Línea sin precio: ${sinPrecio.map((it) => it.name ?? it.barcode).join(", ")}` : null]
           .filter(Boolean)
           .join(" · ") || null,
       soldAt: horaDeLaVenta(body.soldAt),
       cashReceived: body.cashReceived ?? 0,
       changeGiven: body.changeGiven ?? 0,
-      sellerName: buyer?.name ?? sessionName,
-      sellerId: buyer?.id ?? (await resolveSellerId(auth.userId)),
+      // En una compra propia el "vendedor" es quien compra (lo que liquida
+      // fin de mes); si no, quien atiende, y si no se sabe, la sesión.
+      sellerName: buyer?.name ?? attendant?.name ?? sessionName,
+      sellerId: buyer?.id ?? attendant?.id ?? (await resolveSellerId(auth.userId)),
+      sellerNameIsSeller: Boolean(buyer ?? attendant),
       transferReceiptUri: body.transferReceiptUri ?? null,
       transferReceiptName: body.transferReceiptName ?? null,
       isStaffPurchase: body.isStaffPurchase ?? false,

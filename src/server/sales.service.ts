@@ -66,6 +66,8 @@ export interface CreateSaleInput {
   sellerName?: string | null;
   /** Debe ser un `sellers.id` (ver resolveSellerId), no un `users.id`. */
   sellerId?: string | null;
+  /** `sellerName` es el nombre de `sellers` (no el de la sesión): se guarda en sales.seller_name. */
+  sellerNameIsSeller?: boolean;
   transferReceiptUri?: string | null;
   transferReceiptName?: string | null;
   /**
@@ -157,7 +159,7 @@ export async function createSale(input: CreateSaleInput): Promise<{ id: number }
   // es un RPC compartido con otras apps y no se toca su firma sólo por esto.
   // Si este UPDATE falla no se revierte la venta — ya quedó registrada y el
   // stock descontado; se registra el error y sigue.
-  if (input.sellerId || input.isStaffPurchase) {
+  if (input.sellerId || input.isStaffPurchase || input.sellerNameIsSeller) {
     const { error: markErr } = await supabaseServer
       .from("sales")
       .update({
@@ -165,7 +167,9 @@ export async function createSale(input: CreateSaleInput): Promise<{ id: number }
         ...(input.isStaffPurchase ? { is_staff_purchase: true } : {}),
         // apply_sale no escribe seller_name; sin él la liquidación de fin de
         // mes muestra "Sin vendedor" aunque haya seller_id.
-        ...(input.isStaffPurchase && input.sellerName ? { seller_name: input.sellerName } : {}),
+        ...((input.isStaffPurchase || input.sellerNameIsSeller) && input.sellerName
+          ? { seller_name: input.sellerName }
+          : {}),
         ...(input.staffDiscountRate !== undefined
           ? { staff_discount_rate: input.staffDiscountRate }
           : {}),

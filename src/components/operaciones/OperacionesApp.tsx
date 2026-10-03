@@ -12,6 +12,8 @@ import {
 } from "@heroicons/react/24/outline";
 import { POSProvider } from "@/contexts/POSContext";
 import { ScanProvider } from "@/components/scanner/ScanProvider";
+import { AttendantProvider } from "@/hooks/useAttendant";
+import AttendantChip from "@/components/operaciones/AttendantChip";
 import { useSync } from "@/contexts/SyncContext";
 import { useBranch } from "@/contexts/BranchContext";
 import { useOpenShift } from "@/hooks/useOpenShift";
@@ -99,6 +101,7 @@ export default function OperacionesApp() {
     // Productos a corregir un precio no borra el carrito, y el láser tiene un
     // solo dueño que decide a qué pantalla va cada lectura.
     <ScanProvider>
+    <AttendantProvider>
     <POSProvider>
     {/* Altura exacta de la ventana (dvh, no vh: en el navegador del celular la
         barra de direcciones se esconde y vh miente). Así el único que scrollea
@@ -106,6 +109,9 @@ export default function OperacionesApp() {
     <div className="flex flex-col h-dvh bg-[#0a0a0a] text-white">
       <div className="sticky top-0 z-30 bg-[#0a0a0a] border-b border-white/5">
         <div className="flex justify-end gap-2 px-3 pt-2 h-7 items-center">
+          <div className="mr-auto">
+            <AttendantChip />
+          </div>
           <BranchSwitcher />
           <SyncBadge />
         </div>
@@ -165,6 +171,7 @@ export default function OperacionesApp() {
       </div>
     </div>
     </POSProvider>
+    </AttendantProvider>
     </ScanProvider>
   );
 }
