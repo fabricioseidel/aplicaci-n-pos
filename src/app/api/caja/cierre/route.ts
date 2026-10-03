@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireApiAdminOrSeller } from "@/lib/api-auth";
 import { errorResponse } from "@/lib/api-response";
-import { registrarCierre, obtenerResumen, listarCierres } from "@/server/cierre.service";
+import {
+  registrarCierre,
+  obtenerResumen,
+  listarCierres,
+  estadoTurno,
+} from "@/server/cierre.service";
 import type { CierrePayload } from "@/lib/cierre/types";
 
 export const dynamic = "force-dynamic";
@@ -40,7 +45,9 @@ export async function GET(req: NextRequest) {
  * Body: { shiftId, payload }
  *
  * El RPC es idempotente por turno, así que reenviar un cierre corregido desde
- * el computador reemplaza el anterior en vez de duplicarlo.
+ * el computador reemplaza el anterior en vez de duplicarlo. Por eso mismo,
+ * re-registrar un turno YA cerrado queda sólo para ADMIN: una vendedora
+ * podía reescribir el cierre de ayer (y sus fiados) sin que nadie lo notara.
  */
 export async function POST(req: Request) {
   const auth = await requireApiAdminOrSeller();
@@ -54,6 +61,15 @@ export async function POST(req: Request) {
     }
     if (!body.payload || typeof body.payload !== "object") {
       return NextResponse.json({ error: "Falta el detalle del cierre" }, { status: 400 });
+    }
+
+    const estado = await estadoTurno(body.shiftId);
+    if (!estado) return NextResponse.json({ error: "El turno no existe" }, { status: 404 });
+    if (estado === "CLOSED" && auth.role !== "ADMIN") {
+      return NextResponse.json(
+        { error: "Este turno ya se cerró. Sólo un administrador puede corregir el cierre." },
+        { status: 403 }
+      );
     }
 
     const resumen = await registrarCierre(body.shiftId, body.payload);

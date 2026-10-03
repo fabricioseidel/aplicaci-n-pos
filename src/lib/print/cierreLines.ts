@@ -1,5 +1,6 @@
 import { clp } from "@/lib/cierre/denominations";
 import type { CierreResumen } from "@/lib/cierre/types";
+import { parseDejaParaManana, sinDejaParaManana } from "@/lib/cierre/dejaParaManana";
 
 /**
  * Arma el cierre como líneas de texto de ancho fijo.
@@ -77,6 +78,8 @@ export function buildCierreLines(r: CierreResumen): string[] {
   if ((t?.CASH.ingresos ?? 0) > 0) out.push(row("+ Otros ingresos", t!.CASH.ingresos!));
   if ((t?.CASH.egresos ?? 0) > 0) out.push(row("- Retiros/gastos", t!.CASH.egresos!));
   out.push(row("= CONTADO EN CAJA", r.shift.actual_cash ?? 0));
+  const deja = parseDejaParaManana(r.shift.notes);
+  if (deja !== null) out.push(row("Deja para mañana", deja));
 
   if (r.denominations.length > 0) {
     out.push("");
@@ -146,17 +149,32 @@ export function buildCierreLines(r: CierreResumen): string[] {
     out.push(rule());
   }
 
-  if (r.shift.notes) {
+  // Lo que el dueño descuenta del sueldo: no es venta del día ni plata en caja.
+  const compras = (r.compras_personal ?? []).filter((c) => !c.staff_settled_at);
+  if (compras.length > 0) {
+    out.push("PERSONAL POR COBRAR");
+    for (const c of compras) out.push(row(`  ${c.seller_name ?? "Sin dueño"}`, c.total));
+    out.push(row("Total por cobrar", compras.reduce((a, c) => a + Number(c.total), 0)));
+    out.push(rule());
+  }
+
+  const observaciones = sinDejaParaManana(r.shift.notes);
+  if (observaciones) {
     out.push("OBSERVACIONES");
     // El texto libre se parte a mano: el PDF no reajusta líneas por sí solo.
-    for (const chunk of wrap(r.shift.notes, TICKET_COLS)) out.push(chunk);
+    for (const chunk of wrap(observaciones, TICKET_COLS)) out.push(chunk);
     out.push(rule());
   }
 
   out.push("");
   out.push("Firma: _______________________");
   out.push("");
-  out.push(center(`Registrado ${new Date().toLocaleString("es-CL", { timeZone: "America/Santiago" })}`));
+  const hoy = new Date();
+  out.push(
+    center(
+      `Registrado ${hoy.toLocaleDateString("es-CL", { timeZone: "America/Santiago" })} ${hhmm(hoy.toISOString())}`
+    )
+  );
   out.push("");
 
   return out;

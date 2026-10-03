@@ -124,6 +124,20 @@ export interface CierreResumen {
     note: string | null;
   }>;
   balances: Array<{ id: string; name: string; balance: number; oldest_charge: string | null }>;
+  /**
+   * Compras del personal por cobrar hechas en el turno (no anuladas). No las
+   * trae `resumen_cierre`: las agrega el servidor del POS, para que el dueño
+   * las vea en el resumen y en el PDF y las descuente del sueldo.
+   */
+  compras_personal?: CompraPersonal[];
+}
+
+export interface CompraPersonal {
+  id: number;
+  ts: string;
+  total: number;
+  seller_name: string | null;
+  staff_settled_at: string | null;
 }
 
 export interface CustomerBalance {
