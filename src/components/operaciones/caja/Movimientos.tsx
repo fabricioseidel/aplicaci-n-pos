@@ -108,7 +108,6 @@ export default function Movimientos({
         type="text"
         placeholder="Motivo (ej: pago a proveedor)"
         aria-label="Motivo"
-        data-laser-passthrough
         value={motivo}
         onChange={(e) => setMotivo(e.target.value)}
         className="w-full h-12 bg-black border border-white/10 rounded-xl px-3 text-base text-white outline-none focus:border-emerald-500"

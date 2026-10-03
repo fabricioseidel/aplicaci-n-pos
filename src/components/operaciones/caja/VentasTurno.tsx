@@ -274,7 +274,6 @@ function DetalleVenta({
       <input
         type="text"
         aria-label="Motivo de la anulación"
-        data-laser-passthrough
         placeholder="Otro motivo…"
         value={MOTIVOS.includes(motivo) ? "" : motivo}
         onChange={(e) => setMotivo(e.target.value)}

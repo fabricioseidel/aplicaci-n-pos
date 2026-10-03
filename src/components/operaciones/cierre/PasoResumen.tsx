@@ -158,7 +158,6 @@ export default function PasoResumen({
       <Tarjeta titulo="Observaciones">
         <textarea
           aria-label="Observaciones del cierre"
-          data-laser-passthrough
           rows={3}
           placeholder="Algo raro que valga la pena recordar…"
           value={draft.notes}

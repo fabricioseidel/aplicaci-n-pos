@@ -57,7 +57,6 @@ export function Texto({
   return (
     <input
       type="text"
-      data-laser-passthrough
       placeholder={placeholder}
       value={value}
       onChange={(e) => onChange(e.target.value)}

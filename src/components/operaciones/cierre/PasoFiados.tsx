@@ -94,7 +94,6 @@ export default function PasoFiados({
             type="text"
             list="cuentas-fiado"
             aria-label="Nombre de quien se lleva fiado"
-            data-laser-passthrough
             placeholder="Nombre"
             value={nombre}
             onChange={(e) => setNombre(e.target.value)}
@@ -147,7 +146,6 @@ export default function PasoFiados({
           type="text"
           list="cuentas-fiado"
           aria-label="Nombre de quien abona"
-          data-laser-passthrough
           placeholder="Nombre"
           value={abonoNombre}
           onChange={(e) => setAbonoNombre(e.target.value)}
