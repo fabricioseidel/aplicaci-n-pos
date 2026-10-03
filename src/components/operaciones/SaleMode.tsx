@@ -327,7 +327,19 @@ export default function SaleMode({ shiftId }: SaleModeProps) {
         if (result.queued) await refreshPending();
       } else {
         feedback.error();
-        showToast(result.error || "Error en la venta", "error", 6000);
+        const body = result.body as
+          | { code?: string; items?: { barcode: string; price: number; offerPrice: number | null }[] }
+          | undefined;
+        if (result.status === 409 && body?.code === "PRICE_CHANGED") {
+          // Se corrigen las líneas con el precio de la ficha y se vuelve a cobrar.
+          for (const it of body.items ?? []) {
+            const line = cart.find((c) => c.id === it.barcode);
+            if (line) updateLineProduct({ ...line, price: it.price, offerPrice: it.offerPrice ?? undefined });
+          }
+          showToast(`${result.error} Revisa y vuelve a cobrar.`, "warning", 8000);
+        } else {
+          showToast(result.error || "Error en la venta", "error", 6000);
+        }
       }
     } catch (e) {
       showToast(`Error: ${e instanceof Error ? e.message : "desconocido"}`, "error");

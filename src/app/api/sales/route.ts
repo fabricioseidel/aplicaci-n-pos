@@ -4,6 +4,7 @@ import { requireApiAdminOrSeller } from "@/lib/api-auth";
 import { errorResponse } from "@/lib/api-response";
 import { createSale, resolveSellerId, type SalePaymentInput } from "@/server/sales.service";
 import { normalizePaymentMethod } from "@/lib/pos/payments";
+import { precioUnitario, totalEsperado, type PrecioFicha } from "@/lib/pos/precios";
 
 export const dynamic = "force-dynamic";
 
@@ -152,6 +153,61 @@ export async function POST(req: Request) {
       );
     }
 
+    // Precios de la ficha, no los del navegador (un catálogo cacheado de hace
+    // horas o un payload armado a mano cobraban cualquier cosa).
+    const codigos = [...new Set(body.items.map((it) => String(it.barcode)))];
+    const { data: fichasRows, error: errFichas } = await supabaseServer
+      .from("products")
+      .select("barcode, sale_price, offer_price")
+      .in("barcode", codigos);
+    if (errFichas) throw errFichas;
+    const fichas = new Map(
+      ((fichasRows ?? []) as (PrecioFicha & { barcode: string })[]).map((f) => [String(f.barcode), f])
+    );
+    const esperado = totalEsperado(
+      body.items.map((it) => ({ barcode: String(it.barcode), qty: Number(it.qty) })),
+      fichas,
+      Boolean(body.isStaffPurchase)
+    );
+    let notaPrecio: string | null = null;
+    if (esperado.faltantes.length > 0) {
+      return NextResponse.json(
+        { error: `Producto no encontrado: ${esperado.faltantes.join(", ")}` },
+        { status: esReintento ? 422 : 400 }
+      );
+    }
+    if (Math.abs(esperado.total - body.total) > 1) {
+      if (!esReintento) {
+        // El teléfono actualiza las líneas y se vuelve a confirmar (1 toque).
+        const cambiados = body.items
+          .filter((it) => {
+            const f = fichas.get(String(it.barcode));
+            return f && precioUnitario(f) !== Math.round(Number(it.unit_price));
+          })
+          .map((it) => {
+            const f = fichas.get(String(it.barcode))!;
+            return {
+              barcode: String(it.barcode),
+              name: it.name ?? String(it.barcode),
+              price: Math.round(Number(f.sale_price ?? 0)),
+              offerPrice: Number(f.offer_price ?? 0) > 0 ? Math.round(Number(f.offer_price)) : null,
+            };
+          });
+        return NextResponse.json(
+          {
+            error: `Cambió el precio${cambiados.length ? ` de ${cambiados.map((c) => c.name).join(", ")}` : ""}. El total correcto es $${esperado.total.toLocaleString("es-CL")}.`,
+            code: "PRICE_CHANGED",
+            items: cambiados,
+            total: esperado.total,
+          },
+          { status: 409 }
+        );
+      }
+      // Reintento: la venta ya se cobró con esos precios; se registra igual y
+      // queda anotada la diferencia para revisarla.
+      notaPrecio = `Cobrado $${body.total} y la ficha daba $${esperado.total}`;
+    }
+
     // Una compra propia "por cobrar" no recibe dinero ahora: se registra como
     // STAFF_CREDIT para que no entre al arqueo de caja.
     const payments: SalePaymentInput[] =
@@ -212,7 +268,8 @@ export async function POST(req: Request) {
       tax: body.tax ?? 0,
       notes:
         [body.notes,
-          buyer && attendant && attendant.id !== buyer.id ? `Atendió: ${attendant.name}` : null, sinPrecio.length > 0 ? `Línea sin precio: ${sinPrecio.map((it) => it.name ?? it.barcode).join(", ")}` : null]
+          buyer && attendant && attendant.id !== buyer.id ? `Atendió: ${attendant.name}` : null,
+          notaPrecio, sinPrecio.length > 0 ? `Línea sin precio: ${sinPrecio.map((it) => it.name ?? it.barcode).join(", ")}` : null]
           .filter(Boolean)
           .join(" · ") || null,
       soldAt: horaDeLaVenta(body.soldAt),

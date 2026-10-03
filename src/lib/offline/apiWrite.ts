@@ -6,7 +6,7 @@ export type WriteResult<T = unknown> =
   | { ok: true; queued: false; data: T; id: string }
   /** Guardado en el outbox: la UI muestra éxito optimista + "pendiente". */
   | { ok: true; queued: true; id: string; reason?: "offline" | "session" }
-  | { ok: false; queued: false; error: string; status?: number };
+  | { ok: false; queued: false; error: string; status?: number; body?: unknown };
 
 interface ApiWriteOptions {
   kind: OutboxKind;
@@ -93,6 +93,7 @@ export async function apiWrite<T = unknown>(opts: ApiWriteOptions): Promise<Writ
         queued: false,
         error: body?.error || `Error ${res.status}`,
         status: res.status,
+        body,
       };
     }
 
