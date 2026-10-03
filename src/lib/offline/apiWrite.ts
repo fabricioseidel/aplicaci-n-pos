@@ -5,7 +5,7 @@ import { enqueue, newId, type OutboxKind } from "./db";
 export type WriteResult<T = unknown> =
   | { ok: true; queued: false; data: T; id: string }
   /** Guardado en el outbox: la UI muestra éxito optimista + "pendiente". */
-  | { ok: true; queued: true; id: string }
+  | { ok: true; queued: true; id: string; reason?: "offline" | "session" }
   | { ok: false; queued: false; error: string; status?: number };
 
 interface ApiWriteOptions {
@@ -61,12 +61,12 @@ export async function apiWrite<T = unknown>(opts: ApiWriteOptions): Promise<Writ
     payload[opts.idField] = id;
   }
 
-  const queue = async (): Promise<WriteResult<T>> => {
+  const queue = async (reason: "offline" | "session" = "offline"): Promise<WriteResult<T>> => {
     if (!queueable) {
       return { ok: false, queued: false, error: "Sin conexión. Intenta de nuevo." };
     }
     await enqueue({ id, kind: opts.kind, url: opts.url, payload });
-    return { ok: true, queued: true, id };
+    return { ok: true, queued: true, id, reason };
   };
 
   if (typeof navigator !== "undefined" && navigator.onLine === false) {
@@ -79,6 +79,12 @@ export async function apiWrite<T = unknown>(opts: ApiWriteOptions): Promise<Writ
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
+
+    // Sesión vencida en plena venta: la venta ocurrió igual. Se guarda y se
+    // sincroniza cuando alguien vuelva a entrar, en vez de perderla.
+    if (res.status === 401 && opts.kind === "sale" && queueable) {
+      return queue("session");
+    }
 
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
