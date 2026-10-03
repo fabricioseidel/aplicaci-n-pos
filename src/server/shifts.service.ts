@@ -34,6 +34,19 @@ export interface CashShift {
   closed_by_method?: Record<string, ShiftMethodBreakdown> | null;
 }
 
+/**
+ * Ya hay un turno abierto en esa sucursal (índice único
+ * `cash_shifts_un_turno_abierto_por_sucursal`, migración M1). Pasa cuando dos
+ * teléfonos, o dos toques, abren la caja al mismo tiempo: la ruta responde con
+ * el turno que ganó en vez de un error.
+ */
+export class TurnoYaAbiertoError extends Error {
+  constructor() {
+    super("Ya hay una caja abierta en esta sucursal.");
+    this.name = "TurnoYaAbiertoError";
+  }
+}
+
 export async function openShift(data: {
   starting_cash: number;
   seller_id?: string | null;
@@ -61,6 +74,9 @@ export async function openShift(data: {
   if (error?.code === "23503") {
     throw new Error("Tu sesión quedó desactualizada. Cierra sesión y vuelve a entrar.");
   }
+  // 23505 = unique_violation: otro pedido abrió la caja de esta sucursal
+  // entre nuestra consulta y este insert.
+  if (error?.code === "23505") throw new TurnoYaAbiertoError();
   if (error) throw new Error(error.message);
   return shift as CashShift;
 }
@@ -132,6 +148,23 @@ export async function getCurrentShift(
   if (sellerId) query = query.eq("seller_id", sellerId);
 
   const { data, error } = await query.maybeSingle();
+  if (error) throw new Error(error.message);
+  return (data as CashShift) ?? null;
+}
+
+/**
+ * Último turno cerrado de la sucursal, para proponer con cuánto abrir la caja
+ * siguiente (ver `GET /api/caja/shifts`).
+ */
+export async function getLastClosedShift(branchId: string): Promise<CashShift | null> {
+  const { data, error } = await supabaseServer
+    .from("cash_shifts")
+    .select("*")
+    .eq("status", "CLOSED")
+    .eq("branch_id", branchId)
+    .order("ended_at", { ascending: false, nullsFirst: false })
+    .limit(1)
+    .maybeSingle();
   if (error) throw new Error(error.message);
   return (data as CashShift) ?? null;
 }
