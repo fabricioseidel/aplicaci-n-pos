@@ -1,12 +1,26 @@
 "use client";
 
-import React, { createContext, useContext, useState, useCallback, ReactNode, useMemo } from "react";
+import React, {
+  createContext,
+  useContext,
+  useState,
+  useCallback,
+  ReactNode,
+  useMemo,
+  useEffect,
+  useRef,
+} from "react";
 import { ProductUI } from "@/types";
+import {
+  CART_KEY,
+  EMPTY_DRAFT,
+  parseDraft,
+  refreshPrices,
+  type CartLine,
+  type SaleDraft,
+} from "@/lib/pos/cartStorage";
 
-export interface POSItem extends ProductUI {
-  /** Unidades para productos normales; kilos (decimal) para los de peso. */
-  quantity: number;
-}
+export type POSItem = CartLine;
 
 /** Precio unitario efectivo: la oferta manda sobre el precio de lista. */
 export function unitPriceOf(p: ProductUI): number {
@@ -24,22 +38,78 @@ export function lineSubtotal(item: POSItem): number {
   return Math.round(unitPriceOf(item) * item.quantity);
 }
 
+type Comprador = SaleDraft["comprador"];
+
 interface POSContextType {
   cart: POSItem[];
   addToCart: (product: ProductUI, quantity?: number) => void;
   setQuantity: (barcode: string, quantity: number) => void;
   removeFromCart: (barcode: string) => void;
   updateQuantity: (barcode: string, quantity: number) => void;
+  /** Reemplaza los datos de producto de una línea (p. ej. su precio nuevo). */
+  updateLineProduct: (product: ProductUI) => void;
   clearCart: () => void;
   total: number;
   itemCount: number;
+  compraPropia: boolean;
+  setCompraPropia: (v: boolean) => void;
+  porCobrar: boolean;
+  setPorCobrar: (v: boolean) => void;
+  comprador: Comprador;
+  setComprador: (c: Comprador) => void;
+  /** Deja la venta en blanco (al confirmarla o con "Empezar de cero"). */
+  resetSale: () => void;
+  /** Venta retomada al abrir la app, para avisar "Seguimos con la venta en curso". */
+  restored: { count: number; savedAt: number } | null;
+  dismissRestored: () => void;
+  /** Trae los precios del catálogo fresco al carrito; devuelve los que cambiaron. */
+  applyCatalog: (catalog: ProductUI[]) => string[];
 }
 
 const POSContext = createContext<POSContextType | undefined>(undefined);
 
+/**
+ * Venta en curso.
+ *
+ * Vive arriba de todas las pestañas y se guarda en el teléfono: antes estaba
+ * dentro de la pestaña Venta, y con sólo ir a Productos a corregir un precio
+ * (o recargar, o que se cortara la luz) el carrito se perdía y había que
+ * escanear todo de nuevo con el cliente esperando.
+ */
 export function POSProvider({ children }: { children: ReactNode }) {
-  const [cart, setCart] = useState<POSItem[]>([]);
+  const [draft, setDraft] = useState<SaleDraft>(EMPTY_DRAFT);
+  const [restored, setRestored] = useState<{ count: number; savedAt: number } | null>(null);
+  const [hydrated, setHydrated] = useState(false);
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
 
+  // Se lee después de montar (no en el render) para no desentonar con el HTML
+  // del servidor, que no tiene acceso al teléfono.
+  useEffect(() => {
+    let saved: SaleDraft | null = null;
+    try {
+      saved = parseDraft(localStorage.getItem(CART_KEY));
+    } catch {
+      /* sin localStorage: el carrito vive sólo en memoria */
+    }
+    if (saved && saved.items.length > 0) {
+      setDraft(saved);
+      setRestored({ count: saved.items.length, savedAt: saved.savedAt });
+    }
+    setHydrated(true);
+  }, []);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    try {
+      if (draft.items.length === 0 && !draft.compraPropia) localStorage.removeItem(CART_KEY);
+      else localStorage.setItem(CART_KEY, JSON.stringify({ ...draft, savedAt: Date.now() }));
+    } catch {
+      /* lleno o bloqueado: se sigue en memoria */
+    }
+  }, [draft, hydrated]);
+
+  const cart = draft.items;
   const total = useMemo(() => cart.reduce((acc, item) => acc + lineSubtotal(item), 0), [cart]);
 
   // Los productos por peso cuentan como 1 "ítem" en el contador aunque sean
@@ -49,21 +119,30 @@ export function POSProvider({ children }: { children: ReactNode }) {
     [cart]
   );
 
-  const addToCart = useCallback((product: ProductUI, quantity: number = 1) => {
-    setCart((prev) => {
-      const existing = prev.find((item) => item.id === product.id);
-      if (existing) {
-        return prev.map((item) =>
-          item.id === product.id ? { ...item, quantity: item.quantity + quantity } : item
-        );
-      }
-      return [...prev, { ...product, quantity }];
-    });
-  }, []);
+  const setItems = useCallback(
+    (fn: (prev: POSItem[]) => POSItem[]) => setDraft((d) => ({ ...d, items: fn(d.items) })),
+    []
+  );
 
-  const removeFromCart = useCallback((barcode: string) => {
-    setCart((prev) => prev.filter((item) => item.id !== barcode));
-  }, []);
+  const addToCart = useCallback(
+    (product: ProductUI, quantity: number = 1) => {
+      setItems((prev) => {
+        const existing = prev.find((item) => item.id === product.id);
+        if (existing) {
+          return prev.map((item) =>
+            item.id === product.id ? { ...item, quantity: item.quantity + quantity } : item
+          );
+        }
+        return [...prev, { ...product, quantity }];
+      });
+    },
+    [setItems]
+  );
+
+  const removeFromCart = useCallback(
+    (barcode: string) => setItems((prev) => prev.filter((item) => item.id !== barcode)),
+    [setItems]
+  );
 
   /** Fija la cantidad exacta (lo que usa el prompt de peso). */
   const setQuantity = useCallback(
@@ -72,33 +151,63 @@ export function POSProvider({ children }: { children: ReactNode }) {
         removeFromCart(barcode);
         return;
       }
-      setCart((prev) =>
-        prev.map((item) => (item.id === barcode ? { ...item, quantity } : item))
-      );
+      setItems((prev) => prev.map((item) => (item.id === barcode ? { ...item, quantity } : item)));
     },
-    [removeFromCart]
+    [removeFromCart, setItems]
   );
 
-  const updateQuantity = setQuantity;
-
-  const clearCart = useCallback(() => setCart([]), []);
-
-  return (
-    <POSContext.Provider
-      value={{
-        cart,
-        addToCart,
-        setQuantity,
-        removeFromCart,
-        updateQuantity,
-        clearCart,
-        total,
-        itemCount,
-      }}
-    >
-      {children}
-    </POSContext.Provider>
+  const updateLineProduct = useCallback(
+    (product: ProductUI) =>
+      setItems((prev) =>
+        prev.map((item) => (item.id === product.id ? { ...item, ...product, quantity: item.quantity } : item))
+      ),
+    [setItems]
   );
+
+  const clearCart = useCallback(() => setItems(() => []), [setItems]);
+
+  const resetSale = useCallback(() => {
+    setDraft(EMPTY_DRAFT);
+    setRestored(null);
+  }, []);
+
+  const applyCatalog = useCallback((catalog: ProductUI[]) => {
+    if (draftRef.current.items.length === 0 || catalog.length === 0) return [];
+    const { changed } = refreshPrices(draftRef.current.items, catalog);
+    setDraft((d) => ({ ...d, items: refreshPrices(d.items, catalog).items }));
+    return changed;
+  }, []);
+
+  const value = useMemo<POSContextType>(
+    () => ({
+      cart,
+      addToCart,
+      setQuantity,
+      removeFromCart,
+      updateQuantity: setQuantity,
+      updateLineProduct,
+      clearCart,
+      total,
+      itemCount,
+      compraPropia: draft.compraPropia,
+      setCompraPropia: (v) =>
+        setDraft((d) => ({ ...d, compraPropia: v, ...(v ? {} : { porCobrar: false, comprador: null }) })),
+      porCobrar: draft.porCobrar,
+      setPorCobrar: (v) => setDraft((d) => ({ ...d, porCobrar: v })),
+      comprador: draft.comprador,
+      setComprador: (c) => setDraft((d) => ({ ...d, comprador: c })),
+      resetSale,
+      restored,
+      dismissRestored: () => setRestored(null),
+      applyCatalog,
+    }),
+    [
+      cart, addToCart, setQuantity, removeFromCart, updateLineProduct, clearCart, total, itemCount,
+      draft.compraPropia, draft.porCobrar, draft.comprador, resetSale, restored, applyCatalog,
+    ]
+  );
+
+  return <POSContext.Provider value={value}>{children}</POSContext.Provider>;
 }
 
 export const usePOS = () => {

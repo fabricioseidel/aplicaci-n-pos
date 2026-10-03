@@ -41,6 +41,21 @@ interface SaleRequestBody {
   staffSellerId?: string | null;
   /** UUID generado en el cliente. Idempotencia de la cola offline. */
   clientSaleId?: string;
+  /** Hora real de la venta en el teléfono (ISO). Sin red se sincroniza después. */
+  soldAt?: string;
+}
+
+/** Una venta "en el futuro" o de hace más de una semana no se cree: se usa la hora del servidor. */
+const MAX_FUTURO_MS = 5 * 60 * 1000;
+const MAX_ATRASO_MS = 7 * 24 * 60 * 60 * 1000;
+
+function horaDeLaVenta(soldAt: unknown): string | null {
+  if (typeof soldAt !== "string") return null;
+  const t = Date.parse(soldAt);
+  if (!Number.isFinite(t)) return null;
+  const ahora = Date.now();
+  if (t > ahora + MAX_FUTURO_MS || t < ahora - MAX_ATRASO_MS) return null;
+  return new Date(t).toISOString();
 }
 
 /**
@@ -62,6 +77,35 @@ export async function POST(req: Request) {
     }
     if (!Number.isFinite(body.total) || body.total < 0) {
       return NextResponse.json({ error: "Total inválido" }, { status: 400 });
+    }
+
+    // Reintento del outbox: la venta ya ocurrió en el mostrador (y el cliente
+    // se fue con el producto). Rechazarla ahora no la deshace, sólo la pierde.
+    const esReintento = req.headers.get("x-olivo-replay") === "1";
+
+    for (const it of body.items) {
+      if (!(Number(it.qty) > 0)) {
+        return NextResponse.json(
+          { error: `Cantidad inválida para ${it.name ?? it.barcode}` },
+          { status: 400 }
+        );
+      }
+    }
+    const sinPrecio = body.items.filter((it) => !(Number(it.unit_price) > 0) || !(Number(it.subtotal) > 0));
+    if (sinPrecio.length > 0 && !esReintento) {
+      return NextResponse.json(
+        {
+          error: `${sinPrecio.map((it) => it.name ?? it.barcode).join(", ")} no tiene precio. Ponle precio antes de cobrar.`,
+        },
+        { status: 400 }
+      );
+    }
+    if (body.total <= 0) {
+      // apply_sale no puede registrar una venta en $0 (los pagos deben ser > 0).
+      return NextResponse.json(
+        { error: "Una venta en $0 no se puede registrar: revisa los precios" },
+        { status: esReintento ? 422 : 400 }
+      );
     }
 
     /**
@@ -152,7 +196,11 @@ export async function POST(req: Request) {
       total: body.total,
       discount: body.discount ?? 0,
       tax: body.tax ?? 0,
-      notes: body.notes ?? null,
+      notes:
+        [body.notes, sinPrecio.length > 0 ? `Línea sin precio: ${sinPrecio.map((it) => it.name ?? it.barcode).join(", ")}` : null]
+          .filter(Boolean)
+          .join(" · ") || null,
+      soldAt: horaDeLaVenta(body.soldAt),
       cashReceived: body.cashReceived ?? 0,
       changeGiven: body.changeGiven ?? 0,
       sellerName: buyer?.name ?? sessionName,

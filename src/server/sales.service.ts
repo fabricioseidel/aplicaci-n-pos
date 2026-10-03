@@ -77,6 +77,8 @@ export interface CreateSaleInput {
   staffDiscountRate?: number;
   /** Clave de idempotencia. Es LA pieza que hace segura la cola offline. */
   clientSaleId?: string;
+  /** Hora real de la venta (ISO). Sin ella, apply_sale usa now(). */
+  soldAt?: string | null;
   payments: SalePaymentInput[];
   items: SaleItemInput[];
 }
@@ -121,6 +123,9 @@ export async function createSale(input: CreateSaleInput): Promise<{ id: number }
     p_notes: input.notes ?? null,
     p_device_id: "pos-web",
     p_client_sale_id: clientSaleId,
+    // Una venta hecha sin red se registra con su hora real, no con la de la
+    // sincronización (una venta de las 23:50 no puede caer en el día siguiente).
+    ...(input.soldAt ? { p_timestamp: input.soldAt } : {}),
     p_items: input.items.map((it) => ({
       barcode: it.barcode,
       name: it.name ?? "Producto",
