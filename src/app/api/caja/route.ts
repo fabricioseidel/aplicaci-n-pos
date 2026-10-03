@@ -8,7 +8,12 @@ export const dynamic = "force-dynamic";
 /**
  * GET /api/caja?shiftId=xxx
  * Movimientos y ventas del turno en una sola llamada. Lo usan la pestaña Caja
- * (para el esperado en caja) y la de Cierre (para el cuadre por método).
+ * (para el esperado en caja y la lista de ventas) y la de Cierre (para
+ * comparar lo declarado con lo que registró el POS).
+ *
+ * Trae también las anuladas (`voided`), con su motivo: el cálculo las deja
+ * fuera (`lib/caja/resumenTurno`) pero la lista las muestra tachadas, para que
+ * nadie busque una venta que "desapareció".
  */
 export async function GET(request: NextRequest) {
   const auth = await requireApiAdminOrSeller();
@@ -28,7 +33,12 @@ export async function GET(request: NextRequest) {
         .order("created_at", { ascending: false }),
       supabaseServer
         .from("sales")
-        .select("id, total, payment_method, ts, sale_payments(method, amount, reference)")
+        .select(
+          "id, total, payment_method, ts, voided, voided_at, void_reason, voided_by, " +
+            "seller_id, seller_name, is_staff_purchase, notes, " +
+            "sale_payments(method, amount, reference), " +
+            "sale_items(product_barcode, product_name, quantity, unit_price, subtotal)"
+        )
         .eq("shift_id", shiftId)
         .order("ts", { ascending: false }),
     ]);
