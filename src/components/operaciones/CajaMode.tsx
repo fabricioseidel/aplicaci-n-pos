@@ -12,6 +12,7 @@ import { ArrowPathIcon } from "@heroicons/react/24/outline";
 import AbrirCaja from "./caja/AbrirCaja";
 import Movimientos, { MOVEMENT_METHOD_LABEL, type MovementMethod, type NuevoMovimiento } from "./caja/Movimientos";
 import VentasTurno, { type VentaDetalle } from "./caja/VentasTurno";
+import ComprasSinDueno from "./caja/ComprasSinDueno";
 
 /**
  * Lo que avisa la caja hacia arriba. OperacionesApp refresca el estado de la
@@ -265,6 +266,8 @@ export default function CajaMode({
           </div>
         </div>
       )}
+
+      <ComprasSinDueno />
 
       <VentasTurno
         ventas={shiftSales}
