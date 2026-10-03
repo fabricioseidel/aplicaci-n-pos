@@ -14,11 +14,16 @@ import { calcularPreview } from "@/lib/cierre/calc";
 import { compartirCierre } from "@/lib/print/cierrePdf";
 import { useCierreDraft } from "./cierre/useCierreDraft";
 import PasoEfectivo from "./cierre/PasoEfectivo";
-import PasoTransferencias from "./cierre/PasoTransferencias";
+import PasoTransferencias, { type TransferenciaPOS } from "./cierre/PasoTransferencias";
 import PasoVouchers from "./cierre/PasoVouchers";
 import PasoFiados from "./cierre/PasoFiados";
 import PasoResumen from "./cierre/PasoResumen";
 import { FilaTotal, Tarjeta } from "./cierre/campos";
+import Hoja from "./caja/Hoja";
+import type { EventoTurno } from "./CajaMode";
+import { resumenTurno, type VentaTurno } from "@/lib/caja/resumenTurno";
+import { compararCierre, type MetodoComparado } from "@/lib/cierre/comparar";
+import { conDejaParaManana, parseDejaParaManana } from "@/lib/cierre/dejaParaManana";
 
 const PASOS = [
   { id: "EFECTIVO", label: "Efectivo", icon: BanknotesIcon },
@@ -36,6 +41,10 @@ interface Movimiento {
   method?: string;
 }
 
+interface VentaCierre extends VentaTurno {
+  seller_name?: string | null;
+}
+
 /**
  * Cierre de caja declarado.
  *
@@ -48,12 +57,18 @@ interface Movimiento {
  * el POS sí registró se guarda aparte (`pos_totals`) para conciliar cuando el
  * inventario esté al día, sin bloquear el cierre mientras tanto.
  */
-export default function CloseMode({ onShiftChange }: { onShiftChange?: () => void } = {}) {
+export default function CloseMode({
+  onShiftChange,
+}: { onShiftChange?: (evento?: EventoTurno) => void } = {}) {
   const { showToast } = useToast();
   const { currentBranch } = useBranch();
 
   const [shift, setShift] = useState<CashShift | null>(null);
   const [movimientos, setMovimientos] = useState<Movimiento[]>([]);
+  // null = todavía no se sabe qué registró el POS (o no hubo red): el
+  // Resumen no muestra la comparación en vez de mostrar una falsa.
+  const [ventas, setVentas] = useState<VentaCierre[] | null>(null);
+  const [confirmando, setConfirmando] = useState(false);
   const [loading, setLoading] = useState(true);
   const [guardando, setGuardando] = useState(false);
   const [paso, setPaso] = useState<PasoId>("EFECTIVO");
@@ -75,8 +90,9 @@ export default function CloseMode({ onShiftChange }: { onShiftChange?: () => voi
       if (s?.id) {
         const mov = await fetch(`/api/caja?shiftId=${s.id}`, { cache: "no-store" });
         if (mov.ok) {
-          const data = (await mov.json()) as { movements?: Movimiento[] };
+          const data = (await mov.json()) as { movements?: Movimiento[]; sales?: VentaCierre[] };
           setMovimientos(data.movements ?? []);
+          setVentas(data.sales ?? []);
         }
       }
     } catch {
@@ -118,13 +134,57 @@ export default function CloseMode({ onShiftChange }: { onShiftChange?: () => voi
     [draft, sencilloInicial, ingresos, egresos]
   );
 
+  // Lo que registró el POS en este turno (ventas no anuladas), por método.
+  const pos = useMemo(
+    () => (ventas ? resumenTurno({ inicio: sencilloInicial, ventas, movimientos }) : null),
+    [ventas, sencilloInicial, movimientos]
+  );
+
+  const comparacion = useMemo(() => {
+    if (!pos) return null;
+    const abonosPor = (m: "CASH" | "TRANSFER" | "CARD") =>
+      draft.abonos.filter((a) => a.method === m).reduce((acc, a) => acc + Number(a.amount), 0);
+    return compararCierre({
+      pos: { efectivo: pos.efectivo, transferencia: pos.transferencia, tarjeta: pos.tarjeta },
+      inicio: sencilloInicial,
+      ingresos,
+      egresos,
+      contado: preview.contado,
+      transferencias: draft.transfers.reduce((a, t) => a + Number(t.amount), 0),
+      vouchers: draft.vouchers.reduce((a, v) => a + Number(v.total_amount), 0),
+      abonos: { CASH: abonosPor("CASH"), TRANSFER: abonosPor("TRANSFER"), CARD: abonosPor("CARD") },
+    });
+  }, [pos, draft, sencilloInicial, ingresos, egresos, preview.contado]);
+
+  const comprasPersonal = useMemo(
+    () => (ventas ?? []).filter((v) => v.is_staff_purchase && !v.voided),
+    [ventas]
+  );
+
+  const transferenciasPOS = useMemo<TransferenciaPOS[]>(
+    () =>
+      (ventas ?? [])
+        .filter((v) => !v.voided)
+        .flatMap((v) =>
+          (v.sale_payments ?? [])
+            .filter((p) => p.method === "TRANSFER")
+            .map((p) => ({ saleId: v.id, amount: Number(p.amount), reference: p.reference ?? null }))
+        ),
+    [ventas]
+  );
+
+  const volverAContar = (m: MetodoComparado) =>
+    setPaso(m === "efectivo" ? "EFECTIVO" : m === "transferencia" ? "TRANSFER" : "TARJETA");
+
   const registrar = async () => {
     if (!shift?.id || guardando) return;
     setGuardando(true);
     try {
       const payload: CierrePayload = {
         business_date: businessDateToday(),
-        notes: draft.notes || undefined,
+        // "Deja para mañana" viaja como una línea de las notas (no hay
+        // columna): la apertura siguiente la lee para proponer el monto.
+        notes: conDejaParaManana(draft.notes, draft.dejaParaManana) || undefined,
         denominations: Object.entries(draft.denominations)
           .map(([d, q]) => ({ denomination: Number(d), quantity: Number(q) }))
           .filter((d) => d.quantity > 0),
@@ -148,8 +208,9 @@ export default function CloseMode({ onShiftChange }: { onShiftChange?: () => voi
       }
 
       setResultado(data.resumen);
+      setConfirmando(false);
       clear();
-      onShiftChange?.();
+      onShiftChange?.("cerrada");
       showToast("Cierre registrado ✓", "success");
     } catch {
       // El cierre no se encola sin conexión a propósito: se arma sobre el
@@ -204,7 +265,21 @@ export default function CloseMode({ onShiftChange }: { onShiftChange?: () => voi
           <div className="pt-3 border-t border-white/10">
             <FilaTotal label="Total ventas" value={clp(t?.total_ventas ?? 0)} destacado />
           </div>
+          {parseDejaParaManana(resultado.shift.notes) !== null && (
+            <FilaTotal
+              label="Deja para mañana"
+              value={clp(parseDejaParaManana(resultado.shift.notes))}
+            />
+          )}
         </Tarjeta>
+
+        {(resultado.compras_personal ?? []).length > 0 && (
+          <Tarjeta titulo="Personal por cobrar">
+            {(resultado.compras_personal ?? []).map((c) => (
+              <FilaTotal key={c.id} label={c.seller_name ?? "Sin dueño"} value={clp(c.total)} />
+            ))}
+          </Tarjeta>
+        )}
 
         <button
           type="button"
@@ -260,7 +335,7 @@ export default function CloseMode({ onShiftChange }: { onShiftChange?: () => voi
               type="button"
               onClick={() => setPaso(id)}
               aria-current={paso === id ? "step" : undefined}
-              className={`flex-1 flex flex-col items-center gap-1 py-2.5 text-[8px] font-black uppercase tracking-widest border-b-2 transition-colors ${
+              className={`flex-1 flex flex-col items-center justify-center gap-1 min-h-14 py-2 text-[10px] font-black uppercase tracking-widest border-b-2 transition-colors ${
                 paso === id
                   ? "border-emerald-500 text-emerald-400"
                   : i < indice
@@ -291,7 +366,9 @@ export default function CloseMode({ onShiftChange }: { onShiftChange?: () => voi
             egresos={egresos}
           />
         )}
-        {paso === "TRANSFER" && <PasoTransferencias draft={draft} patch={patch} />}
+        {paso === "TRANSFER" && (
+          <PasoTransferencias draft={draft} patch={patch} delPOS={transferenciasPOS} />
+        )}
         {paso === "TARJETA" && <PasoVouchers draft={draft} patch={patch} />}
         {paso === "FIADOS" && <PasoFiados draft={draft} patch={patch} />}
         {paso === "RESUMEN" && (
@@ -301,9 +378,60 @@ export default function CloseMode({ onShiftChange }: { onShiftChange?: () => voi
             preview={preview}
             fecha={businessDateToday()}
             local={currentBranch?.name ?? "Local"}
+            comparacion={comparacion}
+            comprasPersonal={comprasPersonal}
+            onVolverAContar={volverAContar}
           />
         )}
       </div>
+
+      {confirmando && (
+        <Hoja titulo="¿Registrar el cierre?" onClose={() => !guardando && setConfirmando(false)}>
+          <div className="space-y-2">
+            <FilaTotal label="Efectivo contado" value={clp(preview.contado)} />
+            <FilaTotal label="Ventas en efectivo" value={clp(preview.ventasEfectivo)} />
+            <FilaTotal label="Transferencia" value={clp(preview.ventasTransferencia)} />
+            <FilaTotal label="Tarjeta" value={clp(preview.ventasTarjeta)} />
+            <div className="pt-2 border-t border-white/10">
+              <FilaTotal label="Total ventas" value={clp(preview.totalVentas)} destacado />
+            </div>
+            <FilaTotal
+              label="Deja para mañana"
+              value={draft.dejaParaManana === null ? "sin indicar" : clp(draft.dejaParaManana)}
+            />
+            {comparacion
+              ?.filter((f) => f.estado !== "cuadra")
+              .map((f) => (
+                <p key={f.metodo} className="text-sm font-bold text-amber-300">
+                  {f.etiqueta}: {f.texto} según el POS
+                </p>
+              ))}
+          </div>
+          <p className="text-xs text-white/45 leading-relaxed">
+            Después de registrar, la caja queda cerrada. Corregir un cierre ya registrado lo puede
+            hacer sólo un administrador.
+          </p>
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={() => setConfirmando(false)}
+              disabled={guardando}
+              className="h-14 rounded-2xl bg-white/5 text-white/70 text-sm font-black uppercase tracking-widest"
+            >
+              Revisar
+            </button>
+            <button
+              type="button"
+              onClick={registrar}
+              disabled={guardando}
+              className="h-14 rounded-2xl bg-emerald-500 text-black text-sm font-black uppercase tracking-widest flex items-center justify-center gap-2 disabled:opacity-40 active:bg-emerald-600"
+            >
+              {guardando && <ArrowPathIcon className="w-5 h-5 animate-spin" />}
+              Registrar
+            </button>
+          </div>
+        </Hoja>
+      )}
 
       {/* Barra fija: total corriendo + avance */}
       <div className="fixed bottom-0 inset-x-0 z-20 bg-[#0a0a0a]/95 backdrop-blur border-t border-white/10 px-4 py-3">
@@ -330,7 +458,7 @@ export default function CloseMode({ onShiftChange }: { onShiftChange?: () => voi
           {esUltimo ? (
             <button
               type="button"
-              onClick={registrar}
+              onClick={() => setConfirmando(true)}
               disabled={guardando}
               className="h-12 px-6 rounded-xl bg-emerald-500 text-black text-[10px] font-black uppercase tracking-widest shrink-0 disabled:opacity-40 flex items-center gap-2 active:bg-emerald-600 transition-colors"
             >

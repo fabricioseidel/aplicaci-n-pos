@@ -2,13 +2,15 @@
 
 import React, { useState } from "react";
 import { signIn } from "next-auth/react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { ArrowPathIcon, LockClosedIcon } from "@heroicons/react/24/outline";
 
 export default function LoginForm() {
-  const router = useRouter();
   const params = useSearchParams();
-  const callbackUrl = params.get("callbackUrl") || "/";
+  // Sólo rutas de este mismo sitio: un `callbackUrl` armado a mano no puede
+  // mandar a la vendedora a otra página después de escribir su clave.
+  const pedido = params.get("callbackUrl") || "/";
+  const callbackUrl = pedido.startsWith("/") && !pedido.startsWith("//") ? pedido : "/";
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -34,18 +36,22 @@ export default function LoginForm() {
 
       if (!res || res.error) {
         setError("Email o contraseña incorrectos.");
+        setLoading(false);
         return;
       }
 
-      // `router.refresh()` antes de navegar para que el layout recoja la
-      // sesión recién creada y no rebote de vuelta al login.
-      router.refresh();
-      router.replace(callbackUrl);
+      // Navegación COMPLETA, no `router.replace`: los providers del layout
+      // raíz (sucursales, sincronización) se montaron en /login sin sesión
+      // y con la navegación del router no se vuelven a montar. Así quedaba
+      // la sucursal en null y la caja se abría sin sucursal (#3). Recargar
+      // la página los monta de nuevo, ya con la sesión.
+      window.location.replace(callbackUrl);
+      // `loading` sigue en true a propósito: la página se va a recargar.
+      return;
     } catch {
       setError("No se pudo conectar. Revisa la conexión e intenta de nuevo.");
-    } finally {
-      setLoading(false);
     }
+    setLoading(false);
   };
 
   return (

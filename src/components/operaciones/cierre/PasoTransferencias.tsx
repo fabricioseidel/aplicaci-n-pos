@@ -12,12 +12,24 @@ import type { CierreDraft, TransferInput } from "./useCierreDraft";
  * En el cuaderno se anotan en una columna y se suman a mano — que fue
  * justamente donde apareció el error de $1.400 del cierre del 10/09.
  */
+/** Una transferencia que el POS registró como pago de una venta. */
+export interface TransferenciaPOS {
+  saleId: number;
+  amount: number;
+  reference?: string | null;
+}
+
+const notaDeVenta = (id: number) => `Venta #${id}`;
+
 export default function PasoTransferencias({
   draft,
   patch,
+  delPOS = [],
 }: {
   draft: CierreDraft;
   patch: (c: Partial<CierreDraft>) => void;
+  /** Transferencias de las ventas del turno, para no tipearlas de nuevo. */
+  delPOS?: TransferenciaPOS[];
 }) {
   const [monto, setMonto] = useState<number | null>(null);
   const [quien, setQuien] = useState("");
@@ -32,11 +44,42 @@ export default function PasoTransferencias({
     setQuien("");
   };
 
+  // Las que ya se trajeron quedan marcadas con "Venta #N" en la nota: traer
+  // de nuevo sólo agrega las que faltan, nunca duplica.
+  const yaTraidas = new Set(draft.transfers.map((t) => t.note).filter(Boolean));
+  const porTraer = delPOS.filter((t) => !yaTraidas.has(notaDeVenta(t.saleId)));
+
+  const traerDelPOS = () => {
+    if (porTraer.length === 0) return;
+    patch({
+      transfers: [
+        ...draft.transfers,
+        ...porTraer.map((t) => ({
+          amount: t.amount,
+          payer: t.reference?.trim() || notaDeVenta(t.saleId),
+          reference: t.reference ?? undefined,
+          note: notaDeVenta(t.saleId),
+        })),
+      ],
+    });
+  };
+
   const quitar = (i: number) =>
     patch({ transfers: draft.transfers.filter((_, idx) => idx !== i) });
 
   return (
     <div className="space-y-4">
+      {porTraer.length > 0 && (
+        <button
+          type="button"
+          onClick={traerDelPOS}
+          className="w-full min-h-14 rounded-2xl bg-white text-black font-black text-sm px-4 active:bg-white/80"
+        >
+          Traer {porTraer.length === 1 ? "la transferencia" : `las ${porTraer.length} transferencias`} del
+          POS ({clp(porTraer.reduce((a, t) => a + t.amount, 0))})
+        </button>
+      )}
+
       <Tarjeta titulo="Agregar transferencia">
         <Monto aria-label="Monto de la transferencia" value={monto} onChange={setMonto} autoFocus />
         <Texto
@@ -83,11 +126,11 @@ export default function PasoTransferencias({
       )}
 
       {draft.transfers.length === 0 && (
-        <p className="px-1 text-[11px] leading-relaxed text-white/25">
+        <div className="px-1 text-[11px] leading-relaxed text-white/25">
           <Etiqueta>Por qué una por una</Etiqueta>
           Sumarlas a mano es donde se cuelan los errores. Cargadas por separado, el total lo calcula
           el sistema y siempre cuadra con el banco.
-        </p>
+        </div>
       )}
     </div>
   );

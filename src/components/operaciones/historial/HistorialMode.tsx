@@ -7,6 +7,8 @@ import {
 } from "@heroicons/react/24/outline";
 import { useToast } from "@/contexts/ToastContext";
 import { useBranch } from "@/contexts/BranchContext";
+import { paymentLabel } from "@/lib/pos/payments";
+import { parseDejaParaManana, sinDejaParaManana } from "@/lib/cierre/dejaParaManana";
 import { clp } from "@/lib/cierre/denominations";
 import { compartirCierre } from "@/lib/print/cierrePdf";
 import type { CierreResumen, DeclaredTotals } from "@/lib/cierre/types";
@@ -384,9 +386,34 @@ function DetalleCierre({
             </Tarjeta>
           )}
 
-          {resumen.shift.notes && (
+          {parseDejaParaManana(resumen.shift.notes) !== null && (
+            <Tarjeta>
+              <FilaTotal
+                label="Deja para mañana"
+                value={clp(parseDejaParaManana(resumen.shift.notes))}
+              />
+            </Tarjeta>
+          )}
+
+          {(resumen.compras_personal ?? []).length > 0 && (
+            <Tarjeta titulo="Personal por cobrar">
+              {(resumen.compras_personal ?? []).map((c) => (
+                <div key={c.id} className="flex justify-between text-sm">
+                  <span className="text-white/50">
+                    {c.seller_name ?? "Sin dueño"}
+                    {c.staff_settled_at ? " · liquidada" : ""}
+                  </span>
+                  <span className="font-bold text-amber-300 tabular-nums">{clp(c.total)}</span>
+                </div>
+              ))}
+            </Tarjeta>
+          )}
+
+          {sinDejaParaManana(resumen.shift.notes) && (
             <Tarjeta titulo="Observaciones">
-              <p className="text-sm text-white/50 leading-relaxed">{resumen.shift.notes}</p>
+              <p className="text-sm text-white/50 leading-relaxed whitespace-pre-line">
+                {sinDejaParaManana(resumen.shift.notes)}
+              </p>
             </Tarjeta>
           )}
 
@@ -394,7 +421,7 @@ function DetalleCierre({
             <Tarjeta titulo="Lo que registró el POS">
               {Object.entries(pos).map(([metodo, monto]) => (
                 <div key={metodo} className="flex justify-between text-sm">
-                  <span className="text-white/40">{metodo}</span>
+                  <span className="text-white/40">{paymentLabel(metodo)}</span>
                   <span className="font-bold text-white tabular-nums">{clp(monto)}</span>
                 </div>
               ))}

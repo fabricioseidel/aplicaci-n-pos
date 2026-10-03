@@ -1,6 +1,7 @@
 "use client";
 
 import React from "react";
+import MoneyInput from "@/components/ui/MoneyInput";
 
 /**
  * Campos compartidos por los pasos del cierre. Se centralizan para que los
@@ -24,20 +25,18 @@ interface MontoProps {
 }
 
 /**
- * Entrada de monto. `inputMode="numeric"` abre el teclado de números en el
- * celular, y `data-laser-passthrough` evita que el lector de código de barras
- * capture las teclas mientras se escribe.
+ * Entrada de monto en pesos. Es un `MoneyInput`: "3.500" son tres mil
+ * quinientos (con `type="number"` el punto era decimal y quedaba 3,5), se ve
+ * con puntos mientras se escribe y se selecciona todo al tocarlo. Abre el
+ * teclado numérico del celular.
  */
 export function Monto({ value, onChange, placeholder, autoFocus, ...rest }: MontoProps) {
   return (
-    <input
-      type="number"
-      inputMode="numeric"
+    <MoneyInput
       autoFocus={autoFocus}
-      data-laser-passthrough
       placeholder={placeholder ?? "0"}
-      value={value === null || value === 0 ? "" : value}
-      onChange={(e) => onChange(Number(e.target.value) || 0)}
+      value={value === null || value === 0 ? null : value}
+      onChange={(v) => onChange(v ?? 0)}
       className="w-full bg-black border border-white/10 rounded-xl px-3 h-12 text-right text-lg font-black text-white outline-none focus:border-emerald-500 tabular-nums"
       {...rest}
     />
@@ -58,7 +57,6 @@ export function Texto({
   return (
     <input
       type="text"
-      data-laser-passthrough
       placeholder={placeholder}
       value={value}
       onChange={(e) => onChange(e.target.value)}

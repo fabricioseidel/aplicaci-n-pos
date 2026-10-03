@@ -1,5 +1,10 @@
 import { supabaseServer } from "@/lib/supabase-server";
-import type { CierrePayload, CierreResumen, CustomerBalance } from "@/lib/cierre/types";
+import type {
+  CierrePayload,
+  CierreResumen,
+  CompraPersonal,
+  CustomerBalance,
+} from "@/lib/cierre/types";
 
 /**
  * Cliente del cierre declarado.
@@ -20,13 +25,41 @@ export async function registrarCierre(
   });
 
   if (error) throw new Error(`No se pudo registrar el cierre: ${error.message}`);
-  return data as CierreResumen;
+  return conComprasPersonal(data as CierreResumen);
 }
 
 export async function obtenerResumen(shiftId: string): Promise<CierreResumen | null> {
   const { data, error } = await supabaseServer.rpc("resumen_cierre", { p_shift_id: shiftId });
   if (error) throw new Error(error.message);
-  return (data as CierreResumen) ?? null;
+  return data ? conComprasPersonal(data as CierreResumen) : null;
+}
+
+/** Compras del personal por cobrar del turno, para el resumen y el PDF. */
+export async function comprasPersonalDelTurno(shiftId: string): Promise<CompraPersonal[]> {
+  const { data, error } = await supabaseServer
+    .from("sales")
+    .select("id, ts, total, seller_name, staff_settled_at")
+    .eq("shift_id", shiftId)
+    .eq("is_staff_purchase", true)
+    .eq("voided", false)
+    .order("ts", { ascending: true });
+  if (error) throw new Error(error.message);
+  return (data ?? []) as CompraPersonal[];
+}
+
+async function conComprasPersonal(r: CierreResumen): Promise<CierreResumen> {
+  return { ...r, compras_personal: await comprasPersonalDelTurno(r.shift.id) };
+}
+
+/** Estado de un turno, para no dejar que una vendedora reescriba un cierre. */
+export async function estadoTurno(shiftId: string): Promise<"OPEN" | "CLOSED" | null> {
+  const { data, error } = await supabaseServer
+    .from("cash_shifts")
+    .select("status")
+    .eq("id", shiftId)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return (data?.status as "OPEN" | "CLOSED" | undefined) ?? null;
 }
 
 /** Saldos de fiado. Por defecto sólo los que deben algo. */
