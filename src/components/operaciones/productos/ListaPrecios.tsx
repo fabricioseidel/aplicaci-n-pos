@@ -299,7 +299,7 @@ export default function ListaPrecios({
               value={busqueda}
               onChange={(e) => setBusqueda(e.target.value)}
               placeholder="…o búscalo por nombre"
-              data-laser-passthrough
+             
               className="w-full bg-black border border-white/15 rounded-xl h-12 pl-10 pr-3 text-base text-white outline-none focus:border-emerald-500"
             />
           </div>

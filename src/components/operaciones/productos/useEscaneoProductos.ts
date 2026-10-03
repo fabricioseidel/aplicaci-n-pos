@@ -1,16 +1,18 @@
 "use client";
 
-import { useLaserScanner } from "@/components/scanner/useLaserScanner";
+import { useScan } from "@/components/scanner/ScanProvider";
 
 /**
  * Punto de enganche del lector láser en Productos.
  *
  * Escanear en la lista abre la ficha; con una ficha abierta, abre la del otro
  * producto (preguntando si había cambios sin guardar); en "Lista de precios",
- * carga el siguiente. Ninguna lectura debe quedar escrita como precio: eso lo
- * garantiza `useLaserScanner` con los campos `data-scan-guard`.
+ * carga el siguiente. Ninguna lectura queda escrita como precio: el
+ * `ScanProvider` cancela el Enter y devuelve al campo su valor previo (salvo
+ * los campos `data-scan-accept`, como el código de barras de un alta).
  *
- * TODO(merge ccr-8cc05d73-8l31jk): pasar a `useLaserScanner({ enabled, onScan })`.
+ * Con una hoja abierta (ajustar stock, confirmar) no se registra handler: la
+ * lectura se descarta con el aviso "Lectura ignorada".
  */
 export function useEscaneoProductos({
   enabled,
@@ -19,5 +21,5 @@ export function useEscaneoProductos({
   enabled: boolean;
   onScan: (code: string) => void;
 }) {
-  useLaserScanner({ enabled, onDetected: onScan });
+  useScan(onScan, enabled);
 }

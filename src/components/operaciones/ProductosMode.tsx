@@ -191,7 +191,7 @@ export default function ProductosMode() {
             <input
               type="text"
               placeholder="Buscar o escanear…"
-              data-laser-passthrough
+             
               value={query}
               onChange={(e) => {
                 setQuery(e.target.value);

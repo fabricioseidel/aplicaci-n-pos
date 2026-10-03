@@ -386,7 +386,7 @@ export default function FichaProducto({
             <input
               value={form.barcode}
               onChange={(e) => set({ barcode: e.target.value })}
-              data-scan-guard
+              data-scan-accept
               placeholder="Escanéalo"
               className={`${campo} font-mono flex-1`}
             />
