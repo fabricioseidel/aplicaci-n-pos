@@ -166,7 +166,15 @@ export default function OperacionesApp() {
         {mode === "VENTA" && !ventaBloqueada && <SaleMode shiftId={shiftId} />}
         {mode === "RECEPCION" && <ReceptionMode />}
         {mode === "CONTEO" && <ConteoMode />}
-        {mode === "CAJA" && <CajaSection onShiftChange={refrescarCaja} />}
+        {mode === "CAJA" && (
+          <CajaSection
+            onShiftChange={(evento) => {
+              void refrescarCaja();
+              // Abrir la caja (o "Anular y corregir") deja lista la venta.
+              if (evento === "abierta" || evento === "corregir") setMode("VENTA");
+            }}
+          />
+        )}
         {mode === "PRODUCTOS" && <ProductosMode />}
       </div>
     </div>

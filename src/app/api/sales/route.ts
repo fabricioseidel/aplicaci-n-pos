@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { supabaseServer } from "@/lib/supabase-server";
 import { requireApiAdminOrSeller } from "@/lib/api-auth";
 import { errorResponse } from "@/lib/api-response";
+import { resolveBranchId } from "@/server/branches.service";
 import { createSale, resolveSellerId, type SalePaymentInput } from "@/server/sales.service";
 import { normalizePaymentMethod } from "@/lib/pos/payments";
 import { precioUnitario, totalEsperado, type PrecioFicha } from "@/lib/pos/precios";
@@ -141,7 +142,9 @@ export async function POST(req: Request) {
         .eq("status", "OPEN")
         .order("started_at", { ascending: false })
         .limit(1);
-      if (body.branchId) query = query.eq("branch_id", body.branchId);
+      // Sin sucursal (teléfono recién logueado, versión vieja) se usa la
+      // sucursal por defecto, no "cualquier turno abierto".
+      query = query.eq("branch_id", await resolveBranchId(body.branchId));
       const { data: shift } = await query.maybeSingle();
       shiftId = shift?.id ?? null;
     }

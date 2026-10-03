@@ -27,6 +27,7 @@ import QuickCreateProductModal from "@/components/operaciones/QuickCreateProduct
 import WeightPrompt from "@/components/operaciones/WeightPrompt";
 import PriceSheet from "@/components/operaciones/PriceSheet";
 import MoneyInput from "@/components/ui/MoneyInput";
+import { CLAVE_CORREGIR } from "@/components/operaciones/caja/VentasTurno";
 import {
   MagnifyingGlassIcon, XMarkIcon, TrashIcon, MinusIcon, PlusIcon,
   BanknotesIcon, CreditCardIcon, ArrowPathIcon, CheckCircleIcon,
@@ -128,6 +129,35 @@ export default function SaleMode({ shiftId }: SaleModeProps) {
       showToast(`Cambió el precio de: ${changed.join(", ")}`, "warning", 6000);
     }
   }, [allProducts, fromCache, applyCatalog, showToast]);
+
+  // "Anular y corregir" (Caja → Ventas del turno): la venta anulada vuelve
+  // al carrito para cobrarla bien, con los precios de hoy.
+  useEffect(() => {
+    if (allProducts.length === 0) return;
+    let raw: string | null = null;
+    try {
+      raw = localStorage.getItem(CLAVE_CORREGIR);
+      if (raw) localStorage.removeItem(CLAVE_CORREGIR);
+    } catch {
+      return;
+    }
+    if (!raw) return;
+    try {
+      const d = JSON.parse(raw) as { saleId?: number; items?: { barcode: string; name?: string; qty: number }[] };
+      let n = 0;
+      for (const it of d.items ?? []) {
+        const p = allProducts.find((x) => x.id === it.barcode);
+        if (p && Number(it.qty) > 0) {
+          addToCart(p, Number(it.qty));
+          n++;
+        }
+      }
+      setView("cart");
+      showToast(`Venta${d.saleId ? ` #${d.saleId}` : ""} cargada para corregir (${n} producto${n === 1 ? "" : "s"})`, "info", 5000);
+    } catch {
+      /* clave corrupta: se ignora */
+    }
+  }, [allProducts, addToCart, showToast]);
 
   const products = useMemo(
     () => searchProducts(allProducts, searchQuery),
