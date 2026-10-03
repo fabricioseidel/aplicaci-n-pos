@@ -146,3 +146,108 @@ export async function usarProductoExistente(barcode: string): Promise<ProductUI 
   }
   return p;
 }
+
+// ── Ficha y edición parcial (PATCH) ──────────────────────────────────────
+
+/** Fila tal como está en la base (sin redondear): es la base del `expected`. */
+export type FilaProducto = SupaProduct & Record<string, unknown>;
+
+export interface Ficha {
+  fila: FilaProducto;
+  producto: ProductUI;
+  /** El costo lo fija un proveedor: se muestra sólo para mirar. */
+  costoDelProveedor: boolean;
+  /** Stock en la sucursal activa (lo que ajusta "Ajustar stock"). */
+  stockSucursal: number;
+  branchId: string | null;
+}
+
+/** Otra persona cambió el mismo campo mientras se editaba. */
+export class ProductConflictError extends Error {
+  constructor(message: string, readonly fila: FilaProducto, readonly producto: ProductUI) {
+    super(message);
+    this.name = "ProductConflictError";
+  }
+}
+
+/**
+ * Quién está atendiendo el mostrador (selector "¿Quién atiende?"), para dejarlo
+ * como responsable de los cambios de precio. Si todavía no hay selector, null.
+ */
+export function quienAtiende(): string | null {
+  try {
+    const raw = localStorage.getItem("pos.attendant.v1");
+    if (!raw) return null;
+    const v = JSON.parse(raw) as { name?: unknown };
+    return typeof v?.name === "string" && v.name.trim() ? v.name.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+/** La ficha fresca de un producto (incluidos los desactivados). null si no existe. */
+export async function fetchFicha(barcode: string, branchId?: string | null): Promise<Ficha | null> {
+  const qs = branchId ? `?branchId=${encodeURIComponent(branchId)}` : "";
+  const res = await fetch(`/api/products/${encodeURIComponent(barcode)}${qs}`, { cache: "no-store" });
+  if (res.status === 404) return null;
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data?.error || "No se pudo abrir la ficha");
+  return data as Ficha;
+}
+
+/**
+ * Guarda sólo lo que cambió. `expected` lleva el valor original de cada campo
+ * cambiado; si en la base ya es otro, lanza `ProductConflictError`.
+ */
+export async function patchProduct(
+  barcode: string,
+  changes: Record<string, unknown>,
+  expected: Record<string, unknown>
+): Promise<{ fila: FilaProducto; producto: ProductUI; aviso?: string }> {
+  const res = await fetch(`/api/products/${encodeURIComponent(barcode)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ changes, expected, atiende: quienAtiende() }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (res.status === 409 && data?.conflicto) {
+    throw new ProductConflictError(data.error, data.fila, data.producto);
+  }
+  if (!res.ok) throw new Error(data?.error || "No se pudo guardar");
+  return data;
+}
+
+/** "Ajustar stock": cantidad real ahora, con motivo. Idempotente por `opId`. */
+export async function ajustarStock(input: {
+  barcode: string;
+  stock: number;
+  stockVisto: number;
+  motivo: string;
+  opId: string;
+  branchId?: string | null;
+}): Promise<{ ok: true; stock: number } | { ok: false; error: string; stockActual?: number }> {
+  const { barcode, ...resto } = input;
+  const res = await fetch(`/api/products/${encodeURIComponent(barcode)}/stock`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ...resto, atiende: quienAtiende() }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) return { ok: false, error: data?.error || "No se pudo ajustar", stockActual: data?.stock };
+  return { ok: true, stock: Number(data.stock) };
+}
+
+/** Productos desactivados (filtro "Inactivos"). */
+export async function fetchInactivos(): Promise<ProductUI[]> {
+  const res = await fetch("/api/products?estado=inactivos", { cache: "no-store" });
+  if (!res.ok) throw new Error("No se pudieron cargar los inactivos");
+  const data = (await res.json()) as { items?: ProductUI[] };
+  return data.items ?? [];
+}
+
+export async function fetchCategorias(): Promise<string[]> {
+  const res = await fetch("/api/products/categorias", { cache: "no-store" });
+  if (!res.ok) return [];
+  const data = (await res.json().catch(() => ({}))) as { categorias?: string[] };
+  return data.categorias ?? [];
+}

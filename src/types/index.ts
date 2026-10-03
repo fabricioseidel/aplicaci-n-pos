@@ -44,6 +44,11 @@ export type ProductUI = {
   minStock?: number;
   optimumStock?: number;
   updatedAt?: string;
+  /**
+   * El costo lo fija un proveedor (`product_suppliers`): la ficha lo muestra
+   * sólo para mirar. Sólo viene para ADMIN.
+   */
+  costoProveedor?: boolean;
 };
 
 // ── Multi-sucursal ──────────────────────────────────────────────
