@@ -11,6 +11,9 @@ import {
   ArrowPathIcon,
 } from "@heroicons/react/24/outline";
 import { POSProvider } from "@/contexts/POSContext";
+import { ScanProvider } from "@/components/scanner/ScanProvider";
+import { AttendantProvider } from "@/hooks/useAttendant";
+import AttendantChip from "@/components/operaciones/AttendantChip";
 import { useSync } from "@/contexts/SyncContext";
 import { useBranch } from "@/contexts/BranchContext";
 import { useOpenShift } from "@/hooks/useOpenShift";
@@ -35,7 +38,18 @@ const TABS: { id: OperationsMode; label: string; icon: typeof ShoppingCartIcon }
 
 /** Punto naranja con el número de operaciones sin sincronizar. */
 function SyncBadge() {
-  const { pending, syncing, isOnline, syncNow } = useSync();
+  const { pending, syncing, isOnline, syncNow, needsLogin } = useSync();
+
+  if (needsLogin) {
+    return (
+      <a
+        href="/login"
+        className="flex items-center gap-1.5 px-3 h-7 rounded-full text-[10px] font-black uppercase tracking-widest border bg-red-500/15 border-red-500/40 text-red-300"
+      >
+        {pending > 0 ? `${pending} sin enviar · ` : ""}Vuelve a entrar
+      </a>
+    );
+  }
 
   if (pending === 0 && isOnline) return null;
 
@@ -83,12 +97,21 @@ export default function OperacionesApp() {
   const ventaBloqueada = mode === "VENTA" && cajaAbierta === false && !cargandoCaja;
 
   return (
-    // Altura exacta de la ventana (dvh, no vh: en el navegador del celular la
-    // barra de direcciones se esconde y vh miente). Así el único que scrollea
-    // es el contenido, y la barra de pestañas no se puede ir de pantalla.
+    // La venta en curso y el lector láser viven arriba de las pestañas: ir a
+    // Productos a corregir un precio no borra el carrito, y el láser tiene un
+    // solo dueño que decide a qué pantalla va cada lectura.
+    <ScanProvider>
+    <AttendantProvider>
+    <POSProvider>
+    {/* Altura exacta de la ventana (dvh, no vh: en el navegador del celular la
+        barra de direcciones se esconde y vh miente). Así el único que scrollea
+        es el contenido, y la barra de pestañas no se puede ir de pantalla. */}
     <div className="flex flex-col h-dvh bg-[#0a0a0a] text-white">
       <div className="sticky top-0 z-30 bg-[#0a0a0a] border-b border-white/5">
         <div className="flex justify-end gap-2 px-3 pt-2 h-7 items-center">
+          <div className="mr-auto">
+            <AttendantChip />
+          </div>
           <BranchSwitcher />
           <SyncBadge />
         </div>
@@ -140,16 +163,15 @@ export default function OperacionesApp() {
           </div>
         )}
 
-        {mode === "VENTA" && !ventaBloqueada && (
-          <POSProvider>
-            <SaleMode shiftId={shiftId} />
-          </POSProvider>
-        )}
+        {mode === "VENTA" && !ventaBloqueada && <SaleMode shiftId={shiftId} />}
         {mode === "RECEPCION" && <ReceptionMode />}
         {mode === "CONTEO" && <ConteoMode />}
         {mode === "CAJA" && <CajaSection onShiftChange={refrescarCaja} />}
         {mode === "PRODUCTOS" && <ProductosMode />}
       </div>
     </div>
+    </POSProvider>
+    </AttendantProvider>
+    </ScanProvider>
   );
 }

@@ -30,6 +30,8 @@ interface SyncContextType {
   syncNow: () => Promise<void>;
   /** Lo llaman las pantallas al encolar algo, para refrescar el badge. */
   refreshPending: () => Promise<void>;
+  /** El servidor rechazó la sesión al sincronizar: hay que volver a entrar. */
+  needsLogin: boolean;
 }
 
 const SyncContext = createContext<SyncContextType | undefined>(undefined);
@@ -44,6 +46,7 @@ export function SyncProvider({ children }: { children: ReactNode }) {
   const [pending, setPending] = useState(0);
   const [syncing, setSyncing] = useState(false);
   const [isOnline, setIsOnline] = useState(true);
+  const [needsLogin, setNeedsLogin] = useState(false);
   // Evita que el poll y el evento `online` dreñen la cola a la vez y manden
   // la misma operación dos veces.
   const drainingRef = useRef(false);
@@ -69,13 +72,24 @@ export function SyncProvider({ children }: { children: ReactNode }) {
           await markSyncing(op.id);
           const res = await fetch(op.url, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            // Marca de reintento: el servidor sabe que la operación ya ocurrió
+            // en el mostrador (p. ej. acepta una línea sin precio y la anota).
+            headers: { "Content-Type": "application/json", "X-Olivo-Replay": "1" },
             body: JSON.stringify(op.payload),
           });
 
           if (res.ok) {
             await markDone(op.id);
+            setNeedsLogin(false);
             continue;
+          }
+
+          // Sin sesión no tiene sentido seguir ni gastar intentos: la cola
+          // queda intacta hasta que alguien vuelva a entrar.
+          if (res.status === 401 || res.status === 403) {
+            await markFailed(op.id, "Sesión vencida: vuelve a entrar", op.attempts);
+            setNeedsLogin(true);
+            break;
           }
 
           const body = await res.json().catch(() => ({}));
@@ -136,7 +150,7 @@ export function SyncProvider({ children }: { children: ReactNode }) {
   }, [syncNow, refreshPending]);
 
   return (
-    <SyncContext.Provider value={{ pending, syncing, isOnline, syncNow, refreshPending }}>
+    <SyncContext.Provider value={{ pending, syncing, isOnline, syncNow, refreshPending, needsLogin }}>
       {children}
     </SyncContext.Provider>
   );

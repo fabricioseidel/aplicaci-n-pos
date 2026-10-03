@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { ScaleIcon, XMarkIcon } from "@heroicons/react/24/outline";
 import type { ProductUI } from "@/types";
 import { unitPriceOf } from "@/contexts/POSContext";
+import { parseGramos } from "@/lib/num";
 
 interface WeightPromptProps {
   product: ProductUI;
@@ -16,12 +17,19 @@ interface WeightPromptProps {
 /** Pesos frecuentes en el mostrador, en gramos. */
 const QUICK_GRAMS = [100, 250, 500, 750, 1000];
 
+/** Más que esto pide confirmar: en un minimarket casi siempre es un error de tipeo. */
+const KG_CONFIRMAR = 20;
+
 /**
  * Pide el peso al agregar un producto que se vende por kilo.
  *
  * El precio del producto es POR KILO, así que el subtotal es
  * `precio_kg × kg` redondeado a peso — el mismo redondeo por línea que usa
  * el carrito, para que lo mostrado y lo cobrado coincidan exactamente.
+ *
+ * El campo es de texto (no `type="number"`): "0,35" se entiende como 350 g y
+ * "1.200" como 1.200 g, en vez de 0 o 1,2 g. Una lectura del láser con este
+ * cuadro abierto no se escribe acá (ver `ScanProvider`).
  */
 export default function WeightPrompt({
   product,
@@ -38,14 +46,15 @@ export default function WeightPrompt({
   }, []);
 
   const pricePerKg = unitPriceOf(product);
-  const kg = useMemo(() => {
-    const g = Number(grams);
-    return Number.isFinite(g) && g > 0 ? g / 1000 : 0;
-  }, [grams]);
+  const parsedGrams = useMemo(() => parseGramos(grams), [grams]);
+  const kg = parsedGrams && parsedGrams > 0 ? parsedGrams / 1000 : 0;
   const subtotal = useMemo(() => Math.round(pricePerKg * kg), [pricePerKg, kg]);
+  /** "0,35" → se muestra que se entendió 350 g. */
+  const interpretado = parsedGrams !== null && String(parsedGrams) !== grams.trim();
 
   const confirm = () => {
     if (kg <= 0) return;
+    if (kg > KG_CONFIRMAR && !window.confirm(`¿Seguro que son ${kg.toLocaleString("es-CL")} kg?`)) return;
     onConfirm(kg);
   };
 
@@ -59,13 +68,13 @@ export default function WeightPrompt({
               <h2 className="text-sm font-black uppercase tracking-widest truncate">
                 {product.name}
               </h2>
-              <p className="text-[10px] text-white/40 font-bold">
-                $ {pricePerKg.toLocaleString()} por kg
+              <p className="text-[11px] text-white/50 font-bold">
+                $ {pricePerKg.toLocaleString("es-CL")} por kg
               </p>
             </div>
           </div>
-          <button type="button" onClick={onCancel} className="text-white/40 hover:text-white">
-            <XMarkIcon className="h-5 w-5" />
+          <button type="button" onClick={onCancel} aria-label="Cerrar" className="p-2 -m-2 text-white/40 hover:text-white">
+            <XMarkIcon className="h-6 w-6" />
           </button>
         </div>
 
@@ -75,7 +84,7 @@ export default function WeightPrompt({
             confirm();
           }}
         >
-          <label className="block text-[10px] font-black uppercase tracking-widest text-white/40 mb-1">
+          <label className="block text-[11px] font-black uppercase tracking-widest text-white/50 mb-1">
             Peso en gramos
           </label>
           {/* Se pide en gramos y no en kilos a propósito: la balanza del local
@@ -83,16 +92,20 @@ export default function WeightPrompt({
               "0.350" con el teclado numérico del teléfono. */}
           <input
             ref={inputRef}
-            type="number"
+            type="text"
             inputMode="decimal"
-            min={1}
-            step={1}
+            autoComplete="off"
             value={grams}
             onChange={(e) => setGrams(e.target.value)}
             placeholder="350"
-            data-laser-passthrough
+            aria-label="Peso en gramos"
             className="w-full bg-black border-2 border-white/10 rounded-2xl px-4 py-3 text-2xl font-black text-white text-center outline-none focus:border-emerald-500"
           />
+          {interpretado && parsedGrams !== null && (
+            <p className="mt-1 text-center text-xs font-bold text-emerald-300">
+              = {parsedGrams.toLocaleString("es-CL")} g
+            </p>
+          )}
 
           <div className="grid grid-cols-5 gap-1.5 mt-3">
             {QUICK_GRAMS.map((g) => (
@@ -100,10 +113,10 @@ export default function WeightPrompt({
                 key={g}
                 type="button"
                 onClick={() => setGrams(String(g))}
-                className={`py-2 rounded-xl border text-[10px] font-black transition-all ${
-                  Number(grams) === g
+                className={`h-11 rounded-xl border text-xs font-black transition-all ${
+                  parsedGrams === g
                     ? "bg-emerald-500 border-emerald-400 text-black"
-                    : "bg-white/5 border-white/10 text-white/60"
+                    : "bg-white/5 border-white/10 text-white/70"
                 }`}
               >
                 {g >= 1000 ? `${g / 1000}kg` : `${g}g`}
@@ -112,11 +125,11 @@ export default function WeightPrompt({
           </div>
 
           <div className="mt-4 flex justify-between items-center rounded-xl bg-white/5 border border-white/10 px-4 py-3">
-            <span className="text-[10px] font-black uppercase tracking-widest text-white/40">
+            <span className="text-[11px] font-black uppercase tracking-widest text-white/50">
               {kg > 0 ? `${kg.toFixed(3)} kg` : "Subtotal"}
             </span>
             <span className="text-2xl font-black text-emerald-400">
-              $ {subtotal.toLocaleString()}
+              $ {subtotal.toLocaleString("es-CL")}
             </span>
           </div>
 
@@ -124,14 +137,14 @@ export default function WeightPrompt({
             <button
               type="button"
               onClick={onCancel}
-              className="flex-1 h-12 rounded-xl bg-white/5 text-white/60 text-xs font-black uppercase tracking-widest hover:bg-white/10 transition-colors"
+              className="flex-1 h-14 rounded-xl bg-white/5 text-white/70 text-xs font-black uppercase tracking-widest hover:bg-white/10 transition-colors"
             >
               Cancelar
             </button>
             <button
               type="submit"
               disabled={kg <= 0}
-              className="flex-[2] h-12 rounded-xl bg-emerald-500 text-black text-xs font-black uppercase tracking-widest disabled:opacity-30 active:bg-emerald-600 transition-colors"
+              className="flex-[2] h-14 rounded-xl bg-emerald-500 text-black text-sm font-black uppercase tracking-widest disabled:opacity-30 active:bg-emerald-600 transition-colors"
             >
               Agregar
             </button>
