@@ -6,6 +6,7 @@ import { useToast } from "@/contexts/ToastContext";
 import { clp } from "@/lib/cierre/denominations";
 import type { CustomerBalance } from "@/lib/cierre/types";
 import { Tarjeta, FilaTotal, Vacio } from "../cierre/campos";
+import AnotarCuenta from "./AnotarCuenta";
 
 interface Movimiento {
   id: string;
@@ -34,8 +35,8 @@ function antiguedad(iso: string | null): number | null {
  *
  * Lee la misma vista `v_customer_balances` que `/admin/fiados` en la web: si se
  * anota un fiado en el cierre del mostrador, el saldo cambia en los dos lados.
- * Los cargos y abonos se registran en el cierre del día — acá sólo se consulta,
- * porque un abono anotado fuera del arqueo deja la caja de ese día sin cuadrar.
+ * Los fiados y abonos se pueden anotar en el momento: quedan en el turno
+ * abierto y el cierre del día los trae solos, así la caja cuadra igual.
  */
 export default function FiadosMode() {
   const { showToast } = useToast();
@@ -43,6 +44,7 @@ export default function FiadosMode() {
   const [loading, setLoading] = useState(true);
   const [abierta, setAbierta] = useState<CustomerBalance | null>(null);
   const [movimientos, setMovimientos] = useState<Movimiento[] | null>(null);
+  const [anotar, setAnotar] = useState<"CHARGE" | "PAYMENT" | null>(null);
 
   const cargar = useCallback(async () => {
     setLoading(true);
@@ -91,6 +93,37 @@ export default function FiadosMode() {
           {alDia.length > 0 && ` · ${alDia.length} al día`}
         </p>
       </Tarjeta>
+
+      <div className="grid grid-cols-2 gap-2">
+        <button
+          type="button"
+          onClick={() => setAnotar("CHARGE")}
+          className="h-14 rounded-2xl bg-amber-500 text-black text-xs font-black uppercase tracking-widest"
+        >
+          + Anotar fiado
+        </button>
+        <button
+          type="button"
+          onClick={() => setAnotar("PAYMENT")}
+          className="h-14 rounded-2xl bg-emerald-500 text-black text-xs font-black uppercase tracking-widest"
+        >
+          Registrar abono
+        </button>
+      </div>
+
+      {anotar && (
+        <AnotarCuenta
+          tipo={anotar}
+          cuentas={cuentas}
+          inicial={abierta ? { id: abierta.id, name: abierta.name, balance: Number(abierta.balance) } : null}
+          onCerrar={() => setAnotar(null)}
+          onListo={() => {
+            setAnotar(null);
+            setAbierta(null);
+            void cargar();
+          }}
+        />
+      )}
 
       {cuentas.length === 0 ? (
         <Vacio>Todavía no hay fiados</Vacio>
@@ -185,10 +218,22 @@ export default function FiadosMode() {
                 ))
               )}
 
-              <p className="pt-2 text-[11px] leading-relaxed text-white/30">
-                Los fiados y los abonos se anotan al cerrar la caja del día. Registrarlos fuera del
-                cierre deja la caja de ese día sin cuadrar.
-              </p>
+              <div className="grid grid-cols-2 gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setAnotar("CHARGE")}
+                  className="h-12 rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-200 text-xs font-black uppercase"
+                >
+                  + Fiado
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAnotar("PAYMENT")}
+                  className="h-12 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-200 text-xs font-black uppercase"
+                >
+                  Abono
+                </button>
+              </div>
             </div>
           </div>
         </div>

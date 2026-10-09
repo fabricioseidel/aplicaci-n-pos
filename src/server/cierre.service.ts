@@ -116,3 +116,68 @@ export async function listarCierres(opts: {
   if (error) throw new Error(error.message);
   return data ?? [];
 }
+
+export interface MovimientoDelDia {
+  id: string;
+  account_id: string;
+  kind: "CHARGE" | "PAYMENT";
+  amount: number;
+  method: string | null;
+  note: string | null;
+  name: string;
+}
+
+/** Fiados y abonos anotados durante el turno (para que el cierre los incluya). */
+export async function movimientosDelTurno(shiftId: string): Promise<MovimientoDelDia[]> {
+  const { data, error } = await supabaseServer
+    .from("account_entries")
+    .select("id, account_id, kind, amount, method, note, customer_accounts(name)")
+    .eq("shift_id", shiftId)
+    .order("created_at");
+  if (error) throw new Error(error.message);
+  return ((data ?? []) as unknown as (Omit<MovimientoDelDia, "name"> & {
+    customer_accounts: { name: string } | null;
+  })[]).map(({ customer_accounts, ...m }) => ({
+    ...m,
+    amount: Number(m.amount),
+    name: customer_accounts?.name ?? "",
+  }));
+}
+
+/**
+ * Anota un fiado (CHARGE) o un abono (PAYMENT) en el momento, dentro del
+ * turno abierto. `id` lo genera el teléfono: reintentar no lo duplica.
+ */
+export async function anotarMovimiento(input: {
+  id: string;
+  accountId: string | null;
+  nombreNuevo: string | null;
+  kind: "CHARGE" | "PAYMENT";
+  amount: number;
+  method: "CASH" | "TRANSFER" | "CARD" | null;
+  note: string | null;
+  shiftId: string;
+}): Promise<{ id: string; yaExistia: boolean }> {
+  let accountId = input.accountId;
+  if (!accountId) {
+    const { data, error } = await supabaseServer.rpc("find_or_create_account", {
+      p_name: input.nombreNuevo,
+    });
+    if (error) throw new Error(error.message);
+    accountId = String(data);
+  }
+  const { error } = await supabaseServer.from("account_entries").insert({
+    id: input.id,
+    account_id: accountId,
+    shift_id: input.shiftId,
+    kind: input.kind,
+    amount: input.amount,
+    method: input.kind === "PAYMENT" ? input.method ?? "CASH" : null,
+    note: input.note,
+  });
+  if (error) {
+    if (error.code === "23505") return { id: input.id, yaExistia: true };
+    throw new Error(error.message);
+  }
+  return { id: input.id, yaExistia: false };
+}

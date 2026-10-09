@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useCallback, useMemo } from "react";
+import { sumarDelDia, type MovimientoAnotado } from "@/lib/cierre/delDia";
 import {
   BanknotesIcon, ArrowPathIcon, CreditCardIcon, UserGroupIcon,
   ClipboardDocumentCheckIcon, LockClosedIcon, PrinterIcon, CheckCircleIcon,
@@ -75,6 +76,8 @@ export default function CloseMode({
   const [resultado, setResultado] = useState<CierreResumen | null>(null);
 
   const { draft, patch, clear, restored } = useCierreDraft(shift?.id ?? null);
+  /** Fiados y abonos anotados durante el día (Caja → Fiados). */
+  const [delDia, setDelDia] = useState<MovimientoAnotado[] | null>(null);
 
   const cargar = useCallback(async () => {
     setLoading(true);
@@ -94,6 +97,8 @@ export default function CloseMode({
           setMovimientos(data.movements ?? []);
           setVentas(data.sales ?? []);
         }
+        const cuentas = await fetch(`/api/cuentas?turno=${s.id}`, { cache: "no-store" });
+        if (cuentas.ok) setDelDia(((await cuentas.json()) as { movimientos?: MovimientoAnotado[] }).movimientos ?? []);
       }
     } catch {
       /* sin red no se puede saber si hay turno: se deja la pantalla como está */
@@ -105,6 +110,15 @@ export default function CloseMode({
   useEffect(() => {
     void cargar();
   }, [cargar]);
+
+  // Lo anotado durante el día entra al borrador (una sola vez): el cierre
+  // reescribe los movimientos del turno con lo que manda, y si no lo trae se
+  // perdería.
+  useEffect(() => {
+    if (!delDia || delDia.length === 0) return;
+    const r = sumarDelDia(draft, delDia);
+    if (r.agregados > 0) patch({ fiados: r.fiados, abonos: r.abonos });
+  }, [delDia, draft, patch]);
 
   // Sólo los movimientos en efectivo mueven billetes en el cajón; uno por
   // transferencia no cambia lo que se cuenta al cerrar.
