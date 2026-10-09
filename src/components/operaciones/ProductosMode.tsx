@@ -51,7 +51,7 @@ export default function ProductosMode() {
   const esAdmin = (session?.user?.role ?? "").toString().toUpperCase() === "ADMIN";
   const { currentBranch } = useBranch();
   const branchId = currentBranch?.id ?? null;
-  const { products, loading, fromCache, upsertLocal } = useProductCatalog();
+  const { products, loading, fromCache, upsertLocal, refresh } = useProductCatalog();
 
   const [vista, setVista] = useState<Vista>({ tipo: "lista" });
   const [query, setQuery] = useState("");
@@ -166,6 +166,12 @@ export default function ProductosMode() {
         categorias={categorias}
         onClose={cerrarFicha}
         onAbrirOtro={(code) => void abrir(code)}
+        onCodigoCambiado={(code, anterior) => {
+          // El catálogo tiene el código viejo: se recarga entero.
+          void refresh();
+          setUltimo(`✓ Código ${anterior} → ${code}`);
+          setVista({ tipo: "ficha", barcode: code, clave: Date.now() });
+        }}
       />
     );
   }

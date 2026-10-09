@@ -246,3 +246,17 @@ export interface CambioDePrecioHoy {
   antes: number | null;
   despues: number | null;
 }
+
+// ── Corregir el código de barras ─────────────────────────────────────────
+
+/** Valida el código nuevo antes de llamar a `rename_product_barcode`. */
+export function validarNuevoCodigo(
+  actual: string,
+  nuevo: unknown
+): { ok: true; codigo: string } | { ok: false; error: string } {
+  const codigo = typeof nuevo === "string" ? nuevo.trim() : "";
+  if (!codigo) return { ok: false, error: "Falta el código nuevo" };
+  if (codigo.length > 64 || /\s/.test(codigo)) return { ok: false, error: "Ese código no parece un código de barras" };
+  if (codigo === actual.trim()) return { ok: false, error: "El código nuevo es igual al actual" };
+  return { ok: true, codigo };
+}

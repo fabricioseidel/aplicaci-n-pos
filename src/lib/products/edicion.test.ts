@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   diffProduct,
   validarCambios,
+  validarNuevoCodigo,
   costoNetoDesdeBruto,
   costoBrutoDesdeNeto,
   margenSobreVenta,
@@ -138,5 +139,17 @@ describe("oferta hasta (offer_ends_at)", () => {
     const fila = { offer_ends_at: "2026-10-16T02:59:59+00:00" };
     expect(diffProduct(fila, { offer_ends_at: fila.offer_ends_at }).changes).toEqual({});
     expect(diffProduct(fila, { offer_ends_at: null }).changes).toEqual({ offer_ends_at: null });
+  });
+});
+
+describe("validarNuevoCodigo", () => {
+  it("acepta un código distinto, sin espacios alrededor", () => {
+    expect(validarNuevoCodigo("123", " 7801610001196 ")).toEqual({ ok: true, codigo: "7801610001196" });
+  });
+  it("rechaza vacío, igual o con espacios adentro", () => {
+    expect(validarNuevoCodigo("123", "").ok).toBe(false);
+    expect(validarNuevoCodigo("123", "123").ok).toBe(false);
+    expect(validarNuevoCodigo("123", "78 01").ok).toBe(false);
+    expect(validarNuevoCodigo("123", 5).ok).toBe(false);
   });
 });

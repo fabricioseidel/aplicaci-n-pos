@@ -259,3 +259,15 @@ export async function fetchCategorias(): Promise<string[]> {
   const data = (await res.json().catch(() => ({}))) as { categorias?: string[] };
   return data.categorias ?? [];
 }
+
+/** Corrige el código de barras (sólo ADMIN). Devuelve el código que quedó. */
+export async function cambiarCodigo(barcode: string, nuevo: string): Promise<string> {
+  const res = await fetch(`/api/products/${encodeURIComponent(barcode)}/codigo`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ nuevo, atiende: quienAtiende() }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data?.error || "No se pudo cambiar el código");
+  return String(data.barcode);
+}

@@ -9,12 +9,12 @@ import MoneyInput from "@/components/ui/MoneyInput";
 import UnifiedScanner from "@/components/scanner/UnifiedScanner";
 import { useToast } from "@/contexts/ToastContext";
 import {
-  fetchFicha, patchProduct, saveProduct, ProductConflictError, ProductExistsError,
+  cambiarCodigo, fetchFicha, patchProduct, saveProduct, ProductConflictError, ProductExistsError,
   type Ficha, type FilaProducto,
 } from "@/services/products";
 import {
   diffProduct, revisarPrecio, revisarOferta, costoBrutoDesdeNeto, costoNetoDesdeBruto,
-  margenSobreVenta,
+  margenSobreVenta, validarNuevoCodigo,
 } from "@/lib/products/edicion";
 import { formatMiles, parseCantidad } from "@/lib/num";
 import { ofertaVigente } from "@/lib/pos/precios";
@@ -97,6 +97,8 @@ interface Props {
   onClose: (resultado?: ResultadoFicha) => void;
   /** El lector leyó otro código: abrir esa ficha (o un alta si no existe). */
   onAbrirOtro: (code: string) => void;
+  /** Un ADMIN corrigió el código: recargar el catálogo y abrir la ficha con el nuevo. */
+  onCodigoCambiado?: (nuevo: string, anterior: string) => void;
 }
 
 const etiqueta = "block text-[11px] font-black uppercase tracking-widest text-white/45 mb-1";
@@ -114,7 +116,7 @@ const campo =
  *   un proveedor.
  */
 export default function FichaProducto({
-  barcode, nuevo, esAdmin, branchId, categorias, onClose, onAbrirOtro,
+  barcode, nuevo, esAdmin, branchId, categorias, onClose, onAbrirOtro, onCodigoCambiado,
 }: Props) {
   const { showToast } = useToast();
   const esAlta = !barcode;
@@ -128,6 +130,9 @@ export default function FichaProducto({
   const [confirmar, setConfirmar] = useState<{ titulo: string; avisos?: string[]; acciones: AccionConfirmar[] } | null>(null);
   const [ajustando, setAjustando] = useState(false);
   const [escaneandoCodigo, setEscaneandoCodigo] = useState(false);
+  /** "Corregir código" abierto (texto del código nuevo), o null. */
+  const [codigoNuevo, setCodigoNuevo] = useState<string | null>(null);
+  const [cambiandoCodigo, setCambiandoCodigo] = useState(false);
 
   const cargar = useCallback(async () => {
     if (!barcode) return;
@@ -338,7 +343,51 @@ export default function FichaProducto({
       ],
     });
   };
-  useEscaneoProductos({ enabled: !ajustando && !confirmar && !escaneandoCodigo, onScan });
+  useEscaneoProductos({
+    enabled: !ajustando && !confirmar && !escaneandoCodigo && codigoNuevo === null,
+    onScan,
+  });
+
+  // ── Corregir el código de barras (sólo ADMIN) ───────────────────────────
+  const pedirCambioDeCodigo = () => {
+    if (!fila || codigoNuevo === null) return;
+    const v = validarNuevoCodigo(fila.barcode, codigoNuevo);
+    if (!v.ok) return showToast(v.error, "error");
+    setConfirmar({
+      titulo: `¿Cambiar el código de ${form.name || "este producto"}?`,
+      avisos: [
+        `${fila.barcode} → ${v.codigo}`,
+        "Sus ventas, stock, conteos y proveedores pasan al código nuevo. El código anterior deja de existir.",
+      ],
+      acciones: [
+        {
+          label: "Sí, cambiar el código",
+          tono: "peligro",
+          onClick: () => {
+            setConfirmar(null);
+            void ejecutarCambioDeCodigo(v.codigo);
+          },
+        },
+        { label: "Cancelar", tono: "neutro", onClick: () => setConfirmar(null) },
+      ],
+    });
+  };
+
+  const ejecutarCambioDeCodigo = async (codigo: string) => {
+    if (!fila) return;
+    setCambiandoCodigo(true);
+    try {
+      const nuevoCodigo = await cambiarCodigo(fila.barcode, codigo);
+      showToast(`✓ Código cambiado: ${nuevoCodigo}`, "success", 4000);
+      setCodigoNuevo(null);
+      if (onCodigoCambiado) onCodigoCambiado(nuevoCodigo, fila.barcode);
+      else onAbrirOtro(nuevoCodigo);
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : "No se pudo cambiar el código", "error", 6000);
+    } finally {
+      setCambiandoCodigo(false);
+    }
+  };
 
   // ── Render ──────────────────────────────────────────────────────────────
   if (cargando) {
@@ -425,7 +474,22 @@ export default function FichaProducto({
           </div>
         </div>
       ) : (
-        <p className="text-[11px] font-mono text-white/40">{fila?.barcode}</p>
+        <div className="flex items-center gap-2">
+          <p className="flex-1 text-[11px] font-mono text-white/40">{fila?.barcode}</p>
+          {esAdmin && fila && (
+            <button
+              type="button"
+              onClick={() =>
+                hayCambios
+                  ? showToast("Guarda o descarta los cambios antes de corregir el código", "warning")
+                  : setCodigoNuevo("")
+              }
+              className="h-9 px-3 rounded-lg bg-white/5 border border-white/10 text-[10px] font-black uppercase tracking-widest text-white/60"
+            >
+              Corregir código
+            </button>
+          )}
+        </div>
       )}
 
       <div>
@@ -743,6 +807,62 @@ export default function FichaProducto({
                 setEscaneandoCodigo(false);
               }}
             />
+          </div>
+        </div>
+      )}
+
+      {codigoNuevo !== null && fila && (
+        <div
+          role="dialog"
+          aria-label="Corregir código de barras"
+          className="fixed inset-0 z-[120] bg-black/80 backdrop-blur-sm flex items-end sm:items-center justify-center p-4"
+        >
+          <div className="w-full max-w-md bg-[#111] border border-white/15 rounded-3xl p-5 space-y-4">
+            <div>
+              <p className="text-lg font-black">Corregir código de barras</p>
+              <p className="text-sm text-white/50">
+                Actual: <span className="font-mono text-white/80">{fila.barcode}</span>
+              </p>
+            </div>
+            <div>
+              <label htmlFor="codigo-nuevo" className={etiqueta}>
+                Código nuevo (escanéalo o escríbelo)
+              </label>
+              <input
+                id="codigo-nuevo"
+                value={codigoNuevo}
+                onChange={(e) => setCodigoNuevo(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    pedirCambioDeCodigo();
+                  }
+                }}
+                autoFocus
+                data-scan-accept
+                inputMode="numeric"
+                autoComplete="off"
+                className={`${campo} font-mono text-lg`}
+              />
+            </div>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setCodigoNuevo(null)}
+                className="flex-1 min-h-[3.25rem] rounded-2xl bg-white/5 border border-white/10 text-white/70 text-xs font-black uppercase tracking-widest"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={pedirCambioDeCodigo}
+                disabled={cambiandoCodigo || !codigoNuevo.trim()}
+                className="flex-[2] min-h-[3.25rem] rounded-2xl bg-amber-500 text-black text-xs font-black uppercase tracking-widest flex items-center justify-center gap-2 disabled:opacity-40"
+              >
+                {cambiandoCodigo && <ArrowPathIcon className="w-4 h-4 animate-spin" />}
+                Cambiar código
+              </button>
+            </div>
           </div>
         </div>
       )}
