@@ -363,13 +363,21 @@ export default function SaleMode({ shiftId }: SaleModeProps) {
       } else {
         feedback.error();
         const body = result.body as
-          | { code?: string; items?: { barcode: string; price: number; offerPrice: number | null }[] }
+          | {
+              code?: string;
+              items?: { barcode: string; price: number; offerPrice: number | null; offerEndsAt?: string | null }[];
+            }
           | undefined;
         if (result.status === 409 && body?.code === "PRICE_CHANGED") {
           // Se corrigen las líneas con el precio de la ficha y se vuelve a cobrar.
           for (const it of body.items ?? []) {
             const line = cart.find((c) => c.id === it.barcode);
-            if (line) updateLineProduct({ ...line, price: it.price, offerPrice: it.offerPrice ?? undefined });
+            if (line) updateLineProduct({
+                ...line,
+                price: it.price,
+                offerPrice: it.offerPrice ?? undefined,
+                offerEndsAt: it.offerEndsAt ?? null,
+              });
           }
           showToast(`${result.error} Revisa y vuelve a cobrar.`, "warning", 8000);
         } else {

@@ -5,7 +5,8 @@ import { errorResponse } from "@/lib/api-response";
 import { resolveBranchId } from "@/server/branches.service";
 import { createSale, resolveSellerId, type SalePaymentInput } from "@/server/sales.service";
 import { normalizePaymentMethod } from "@/lib/pos/payments";
-import { precioUnitario, totalEsperado, type PrecioFicha } from "@/lib/pos/precios";
+import { ofertaVigente, precioUnitario, totalEsperado, type PrecioFicha } from "@/lib/pos/precios";
+import { conColumnasDeProducto } from "@/server/productos.service";
 
 export const dynamic = "force-dynamic";
 
@@ -159,13 +160,13 @@ export async function POST(req: Request) {
     // Precios de la ficha, no los del navegador (un catálogo cacheado de hace
     // horas o un payload armado a mano cobraban cualquier cosa).
     const codigos = [...new Set(body.items.map((it) => String(it.barcode)))];
-    const { data: fichasRows, error: errFichas } = await supabaseServer
-      .from("products")
-      .select("barcode, sale_price, offer_price")
-      .in("barcode", codigos);
+    const { data: fichasRows, error: errFichas } = await conColumnasDeProducto(
+      (cols) => supabaseServer.from("products").select(cols).in("barcode", codigos),
+      "barcode, sale_price, offer_price, offer_ends_at"
+    );
     if (errFichas) throw errFichas;
     const fichas = new Map(
-      ((fichasRows ?? []) as (PrecioFicha & { barcode: string })[]).map((f) => [String(f.barcode), f])
+      ((fichasRows ?? []) as unknown as (PrecioFicha & { barcode: string })[]).map((f) => [String(f.barcode), f])
     );
     const esperado = totalEsperado(
       body.items.map((it) => ({
@@ -197,7 +198,10 @@ export async function POST(req: Request) {
               barcode: String(it.barcode),
               name: it.name ?? String(it.barcode),
               price: Math.round(Number(f.sale_price ?? 0)),
-              offerPrice: Number(f.offer_price ?? 0) > 0 ? Math.round(Number(f.offer_price)) : null,
+              offerPrice: ofertaVigente(Number(f.offer_price ?? 0), f.offer_ends_at)
+                ? Math.round(Number(f.offer_price))
+                : null,
+              offerEndsAt: f.offer_ends_at ?? null,
             };
           });
         return NextResponse.json(

@@ -15,6 +15,7 @@ export const CAMPOS_EDITABLES = [
   "category",
   "sale_price",
   "offer_price",
+  "offer_ends_at",
   "purchase_price",
   "min_stock",
   "optimum_stock",
@@ -116,6 +117,16 @@ export function validarCambios(input: unknown): ResultadoValidacion {
         }
         out.offer_price = v as number | null;
         break;
+      case "offer_ends_at": {
+        if (v === null) {
+          out.offer_ends_at = null;
+          break;
+        }
+        const ms = typeof v === "string" ? Date.parse(v) : NaN;
+        if (Number.isNaN(ms)) return { ok: false, error: "Fecha de término de la oferta inválida" };
+        out.offer_ends_at = new Date(ms).toISOString();
+        break;
+      }
       case "purchase_price":
         if (typeof v !== "number" || !Number.isFinite(v) || v < 0) {
           return { ok: false, error: "Costo inválido" };
@@ -234,4 +245,18 @@ export interface CambioDePrecioHoy {
   campo: "sale_price" | "offer_price";
   antes: number | null;
   despues: number | null;
+}
+
+// ── Corregir el código de barras ─────────────────────────────────────────
+
+/** Valida el código nuevo antes de llamar a `rename_product_barcode`. */
+export function validarNuevoCodigo(
+  actual: string,
+  nuevo: unknown
+): { ok: true; codigo: string } | { ok: false; error: string } {
+  const codigo = typeof nuevo === "string" ? nuevo.trim() : "";
+  if (!codigo) return { ok: false, error: "Falta el código nuevo" };
+  if (codigo.length > 64 || /\s/.test(codigo)) return { ok: false, error: "Ese código no parece un código de barras" };
+  if (codigo === actual.trim()) return { ok: false, error: "El código nuevo es igual al actual" };
+  return { ok: true, codigo };
 }

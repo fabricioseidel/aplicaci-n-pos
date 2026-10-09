@@ -19,12 +19,13 @@ import {
   type CartLine,
   type SaleDraft,
 } from "@/lib/pos/cartStorage";
+import { ofertaVigente } from "@/lib/pos/precios";
 
 export type POSItem = CartLine;
 
-/** Precio unitario efectivo: la oferta manda sobre el precio de lista. */
+/** Precio unitario efectivo: la oferta vigente (sin vencer) manda sobre el precio de lista. */
 export function unitPriceOf(p: ProductUI): number {
-  return p.offerPrice && p.offerPrice > 0 ? p.offerPrice : p.price;
+  return p.offerPrice && ofertaVigente(p.offerPrice, p.offerEndsAt) ? p.offerPrice : p.price;
 }
 
 /**

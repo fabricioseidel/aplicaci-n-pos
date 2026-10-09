@@ -15,6 +15,8 @@ import { searchProducts } from "@/lib/pos/search";
 import type { ProductUI } from "@/types";
 import Confirmar, { type AccionConfirmar } from "./Confirmar";
 import { useEscaneoProductos } from "./useEscaneoProductos";
+import { ofertaVigente } from "@/lib/pos/precios";
+import { fechaChile, fechaCorta } from "@/lib/products/oferta";
 
 const CLAVE = "pos.listaPrecios.v1";
 const clp = (n: number | null | undefined) =>
@@ -328,9 +330,13 @@ export default function ListaPrecios({
               <p className="text-xl font-black leading-tight">{actual.ficha.producto.name}</p>
               <p className="text-sm text-white/50">
                 Precio actual <strong className="text-white text-lg">{clp(precioAntes)}</strong>
-                {Number(actual.ficha.fila.offer_price) > 0 && (
+                {ofertaVigente(Number(actual.ficha.fila.offer_price), actual.ficha.fila.offer_ends_at) && (
                   <span className="ml-2 text-amber-300 font-bold">
-                    · en oferta a {clp(Number(actual.ficha.fila.offer_price))} (manda la oferta)
+                    · en oferta a {clp(Number(actual.ficha.fila.offer_price))}
+                    {actual.ficha.fila.offer_ends_at
+                      ? ` hasta el ${fechaCorta(fechaChile(actual.ficha.fila.offer_ends_at))}`
+                      : ""}{" "}
+                    (manda la oferta)
                   </span>
                 )}
                 {actual.ficha.fila.is_active === false && <span className="ml-2 text-amber-300 font-bold">· desactivado</span>}
