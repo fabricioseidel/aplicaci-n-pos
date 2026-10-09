@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeftIcon, ArrowPathIcon, CheckIcon, ChevronDownIcon, ChevronUpIcon,
   ScaleIcon, TagIcon, CubeIcon, CameraIcon, XMarkIcon,
@@ -9,7 +9,7 @@ import MoneyInput from "@/components/ui/MoneyInput";
 import UnifiedScanner from "@/components/scanner/UnifiedScanner";
 import { useToast } from "@/contexts/ToastContext";
 import {
-  cambiarCodigo, fetchFicha, patchProduct, saveProduct, ProductConflictError, ProductExistsError,
+  cambiarCodigo, fetchFicha, patchProduct, saveProduct, subirFoto, ProductConflictError, ProductExistsError,
   type Ficha, type FilaProducto,
 } from "@/services/products";
 import {
@@ -18,6 +18,7 @@ import {
 } from "@/lib/products/edicion";
 import { formatMiles, parseCantidad } from "@/lib/num";
 import { ofertaVigente } from "@/lib/pos/precios";
+import { comprimirFoto } from "@/lib/products/comprimirFoto";
 import { fechaChile, fechaCorta, finDelDiaChile, hoyChile } from "@/lib/products/oferta";
 import type { ProductUI } from "@/types";
 import Confirmar, { type AccionConfirmar } from "./Confirmar";
@@ -116,7 +117,7 @@ const campo =
  *   un proveedor.
  */
 export default function FichaProducto({
-  barcode, nuevo, esAdmin, branchId, categorias, onClose, onAbrirOtro, onCodigoCambiado,
+  barcode, nuevo, esAdmin, branchId, categorias, onClose: cerrarFicha, onAbrirOtro, onCodigoCambiado,
 }: Props) {
   const { showToast } = useToast();
   const esAlta = !barcode;
@@ -133,6 +134,15 @@ export default function FichaProducto({
   /** "Corregir código" abierto (texto del código nuevo), o null. */
   const [codigoNuevo, setCodigoNuevo] = useState<string | null>(null);
   const [cambiandoCodigo, setCambiandoCodigo] = useState(false);
+  const [subiendoFoto, setSubiendoFoto] = useState(false);
+  /** Producto con la foto nueva: si se cierra sin guardar nada más, igual se informa a la lista. */
+  const conFotoNueva = useRef<ProductUI | null>(null);
+
+  /** Al cerrar sin otro cambio, la lista igual tiene que enterarse de la foto nueva. */
+  const onClose = (r?: ResultadoFicha) => {
+    const p = conFotoNueva.current;
+    cerrarFicha(r ?? (p ? { producto: p, resumen: `Foto de ${p.name} guardada` } : undefined));
+  };
 
   const cargar = useCallback(async () => {
     if (!barcode) return;
@@ -159,6 +169,26 @@ export default function FichaProducto({
   }, [cargar]);
 
   const set = (p: Partial<Form>) => setForm((prev) => ({ ...prev, ...p }));
+
+  // ── Foto con la cámara ──────────────────────────────────────────────────
+  const tomarFoto = async (archivo: File | undefined) => {
+    if (!archivo || !barcode) return;
+    setSubiendoFoto(true);
+    try {
+      const foto = await comprimirFoto(archivo);
+      const r = await subirFoto(barcode, foto);
+      conFotoNueva.current = r.producto;
+      // La foto ya quedó guardada: la fila y el formulario la toman como
+      // propia para que no aparezca como "cambio sin guardar".
+      setFicha((prev) => (prev ? { ...prev, fila: { ...prev.fila, image_url: r.url }, producto: r.producto } : prev));
+      set({ imageUrl: r.url });
+      showToast("✓ Foto guardada", "success", 2500);
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : "No se pudo subir la foto", "error", 6000);
+    } finally {
+      setSubiendoFoto(false);
+    }
+  };
 
   const costoEditable = esAdmin && !ficha?.costoDelProveedor;
   const fila = ficha?.fila ?? null;
@@ -489,6 +519,40 @@ export default function FichaProducto({
               Corregir código
             </button>
           )}
+        </div>
+      )}
+
+      {!esAlta && fila && (
+        <div className="flex items-center gap-3">
+          <div className="w-20 h-20 shrink-0 rounded-2xl overflow-hidden bg-white/5 border border-white/10 flex items-center justify-center">
+            {form.imageUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element -- imagen externa sin dimensiones conocidas
+              <img src={form.imageUrl} alt="" data-testid="foto-producto" className="w-full h-full object-cover" />
+            ) : (
+              <CameraIcon className="w-8 h-8 text-white/20" />
+            )}
+          </div>
+          <label
+            className={`flex-1 h-14 rounded-xl border border-emerald-500/30 bg-emerald-500/10 text-emerald-300 text-xs font-black uppercase tracking-widest flex items-center justify-center gap-2 ${
+              subiendoFoto ? "opacity-50 pointer-events-none" : "active:bg-emerald-500/20"
+            }`}
+          >
+            {subiendoFoto ? <ArrowPathIcon className="w-5 h-5 animate-spin" /> : <CameraIcon className="w-5 h-5" />}
+            {subiendoFoto ? "Subiendo foto…" : form.imageUrl ? "Cambiar foto" : "Tomar foto"}
+            <input
+              type="file"
+              accept="image/*"
+              capture="environment"
+              aria-label="Tomar foto"
+              className="sr-only"
+              disabled={subiendoFoto}
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                e.target.value = "";
+                void tomarFoto(f);
+              }}
+            />
+          </label>
         </div>
       )}
 

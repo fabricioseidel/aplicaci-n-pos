@@ -271,3 +271,16 @@ export async function cambiarCodigo(barcode: string, nuevo: string): Promise<str
   if (!res.ok) throw new Error(data?.error || "No se pudo cambiar el código");
   return String(data.barcode);
 }
+
+/** Sube la foto (ya comprimida) y la deja como imagen del producto. */
+export async function subirFoto(
+  barcode: string,
+  foto: Blob
+): Promise<{ url: string; fila: FilaProducto; producto: ProductUI }> {
+  const form = new FormData();
+  form.append("file", foto, "foto.jpg");
+  const res = await fetch(`/api/products/${encodeURIComponent(barcode)}/foto`, { method: "POST", body: form });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data?.error || "No se pudo subir la foto");
+  return data;
+}
