@@ -84,7 +84,6 @@ export default function PasoVouchers({
               type="number"
               inputMode="numeric"
               aria-label={`Cantidad de ${label.toLowerCase()}`}
-              data-laser-passthrough
               placeholder="cant"
               value={(nuevo[`${key}_count`] as number) || ""}
               onChange={(e) => set(`${key}_count`, Number(e.target.value) || 0)}

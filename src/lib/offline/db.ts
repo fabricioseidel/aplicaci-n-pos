@@ -99,6 +99,21 @@ export async function readCachedProducts(): Promise<ProductUI[]> {
   return (await db.productsCache.toArray()) as ProductUI[];
 }
 
+/**
+ * Actualiza UN producto en la caché después de editarlo, para que sin red se
+ * venda con el precio nuevo y no con el de la última descarga completa. Un
+ * producto desactivado sale de la caché (el catálogo del POS sólo tiene activos).
+ */
+export async function cacheProduct(product: ProductUI): Promise<void> {
+  const db = getDb();
+  const barcode = product.barcode || product.id;
+  if (product.isActive === false) {
+    await db.productsCache.delete(barcode);
+    return;
+  }
+  await db.productsCache.put({ ...product, barcode, cachedAt: Date.now() });
+}
+
 export async function countCachedProducts(): Promise<number> {
   return getDb().productsCache.count();
 }

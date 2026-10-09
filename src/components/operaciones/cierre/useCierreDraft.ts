@@ -12,6 +12,8 @@ export interface CierreDraft {
   fiados: FiadoInput[];
   abonos: AbonoInput[];
   notes: string;
+  /** "¿Cuánto dejas en la caja para mañana?": lo que se propone al abrir. */
+  dejaParaManana: number | null;
 }
 
 const EMPTY: CierreDraft = {
@@ -22,6 +24,7 @@ const EMPTY: CierreDraft = {
   fiados: [],
   abonos: [],
   notes: "",
+  dejaParaManana: null,
 };
 
 const key = (shiftId: string) => `pos.cierre.${shiftId}`;

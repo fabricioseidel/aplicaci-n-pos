@@ -1,23 +1,31 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { BoltIcon, XMarkIcon, ArrowPathIcon } from "@heroicons/react/24/outline";
-import { saveProduct } from "@/services/products";
+import { useState } from "react";
+import { BoltIcon, XMarkIcon, ArrowPathIcon, ScaleIcon } from "@heroicons/react/24/outline";
+import { saveProduct, ProductExistsError, usarProductoExistente, DEFAULT_IMAGE } from "@/services/products";
 import { useToast } from "@/contexts/ToastContext";
-import { DEFAULT_IMAGE } from "@/services/products";
+import MoneyInput from "@/components/ui/MoneyInput";
+import { revisarPrecio } from "@/lib/products/edicion";
+import Confirmar from "@/components/operaciones/productos/Confirmar";
 import type { ProductUI } from "@/types";
 
 interface QuickCreateProductModalProps {
+  /** Lo que se escaneó o se buscó: si parece código va al código; si no, al nombre. */
   initialBarcode: string;
   onClose: () => void;
   onCreated: (product: ProductUI) => void;
 }
 
+/** Un texto que es código de barras y no un nombre ("pan amasado"). */
+const pareceCodigo = (t: string) => /^[0-9]{4,}$|^INT-/i.test(t.trim());
+
+/** Código interno para productos sin código de barras propio (pan, fruta…). */
+const codigoInterno = () => `INT-${Date.now().toString(36).toUpperCase()}`;
+
 /**
- * Creación mínima de un producto desde el mostrador, para cuando se va a
- * vender algo que todavía no existe en el catálogo. A propósito pide sólo lo
- * esencial para vender ya (código, nombre, precio, stock); el resto se
- * completa después en la pestaña Productos.
+ * Creación mínima de un producto desde el mostrador, para vender algo que
+ * todavía no existe en el catálogo: código, nombre y precio. El stock no se
+ * pide (lo llevan Recepción y Conteo) y el resto se completa en Productos.
  */
 export default function QuickCreateProductModal({
   initialBarcode,
@@ -25,50 +33,42 @@ export default function QuickCreateProductModal({
   onCreated,
 }: QuickCreateProductModalProps) {
   const { showToast } = useToast();
-  const [barcode, setBarcode] = useState(initialBarcode);
-  const [name, setName] = useState("");
-  const [price, setPrice] = useState<number | "">("");
-  const [stock, setStock] = useState(1);
+  const inicioEsCodigo = pareceCodigo(initialBarcode);
+  const [barcode, setBarcode] = useState(inicioEsCodigo ? initialBarcode.trim() : "");
+  const [name, setName] = useState(inicioEsCodigo ? "" : initialBarcode.trim());
+  const [price, setPrice] = useState<number | null>(null);
   const [byWeight, setByWeight] = useState(false);
   const [saving, setSaving] = useState(false);
-  const nameRef = useRef<HTMLInputElement>(null);
+  const [avisos, setAvisos] = useState<string[] | null>(null);
 
-  useEffect(() => {
-    nameRef.current?.focus();
-  }, []);
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const trimmedBarcode = barcode.trim();
+  const crear = async () => {
+    const trimmedBarcode = barcode.trim() || codigoInterno();
     const trimmedName = name.trim();
-
-    if (!trimmedBarcode || !trimmedName || !price || Number(price) <= 0) {
-      showToast("Completa código, nombre y precio", "error");
-      return;
-    }
-
+    setAvisos(null);
     setSaving(true);
     try {
-      await saveProduct({
-        barcode: trimmedBarcode,
-        name: trimmedName,
-        sale_price: Number(price),
-        stock: Number(stock) || 0,
-        by_weight: byWeight,
-        measurement_unit: byWeight ? "kg" : null,
-        is_active: true,
-      });
+      await saveProduct(
+        {
+          barcode: trimmedBarcode,
+          name: trimmedName,
+          sale_price: price as number,
+          by_weight: byWeight,
+          measurement_unit: byWeight ? "kg" : null,
+          is_active: true,
+        },
+        { crear: true }
+      );
 
       const product: ProductUI = {
         id: trimmedBarcode,
         barcode: trimmedBarcode,
         name: trimmedName,
-        price: Number(price),
+        price: price as number,
         image: DEFAULT_IMAGE,
         slug: trimmedName.toLowerCase().trim().replace(/\s+/g, "-"),
         description: "",
         categories: [],
-        stock: Number(stock) || 0,
+        stock: 0,
         featured: false,
         byWeight,
         measurementUnit: byWeight ? "kg" : undefined,
@@ -78,10 +78,35 @@ export default function QuickCreateProductModal({
       showToast(`Producto creado: ${trimmedName}`, "success");
       onCreated(product);
     } catch (err) {
+      if (err instanceof ProductExistsError) {
+        const existente = await usarProductoExistente(err.existente.barcode).catch(() => null);
+        if (existente) {
+          showToast(
+            `${err.message}${err.existente.isActive ? "" : ": lo reactivé"} y lo agregué`,
+            "warning",
+            5000
+          );
+          onCreated(existente);
+          return;
+        }
+      }
       showToast(err instanceof Error ? err.message : "Error al crear el producto", "error");
     } finally {
       setSaving(false);
     }
+  };
+
+  const handleSubmit = (e?: React.FormEvent) => {
+    e?.preventDefault();
+    if (saving) return;
+    if (!name.trim()) return showToast("Falta el nombre", "error");
+    if (!price || price <= 0) return showToast("Falta el precio", "error");
+    const a = revisarPrecio(null, price);
+    if (a.length > 0) {
+      setAvisos(a);
+      return;
+    }
+    void crear();
   };
 
   return (
@@ -90,95 +115,77 @@ export default function QuickCreateProductModal({
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2 text-emerald-400">
             <BoltIcon className="h-5 w-5" />
-            <h2 className="text-sm font-black uppercase tracking-widest">Creación rápida</h2>
+            <h2 className="text-sm font-black uppercase tracking-widest">Producto nuevo</h2>
           </div>
-          <button type="button" onClick={onClose} className="text-white/40 hover:text-white">
-            <XMarkIcon className="h-5 w-5" />
+          <button type="button" onClick={onClose} aria-label="Cerrar" className="p-2 -mr-2 text-white/50">
+            <XMarkIcon className="h-6 w-6" />
           </button>
         </div>
-        <p className="text-xs text-white/40 mb-4">
-          Producto no encontrado. Complétalo con lo esencial para venderlo ahora; puedes agregar
-          foto y categoría después en la pestaña Productos.
+        <p className="text-sm text-white/45 mb-4">
+          No está en el catálogo. Con nombre y precio ya se puede vender; lo demás se completa en Productos.
         </p>
 
         <form onSubmit={handleSubmit} className="space-y-3">
           <div>
-            <label className="block text-[10px] font-black uppercase tracking-widest text-white/40 mb-1">
-              Código de barras
-            </label>
+            <label className="block text-[11px] font-black uppercase tracking-widest text-white/45 mb-1">Nombre *</label>
             <input
-              value={barcode}
-              onChange={(e) => setBarcode(e.target.value)}
-              className="w-full bg-black border border-white/10 rounded-xl px-3 py-2.5 text-white font-mono text-sm outline-none focus:border-emerald-500"
+              autoFocus={!name}
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              className="w-full bg-black border border-white/15 rounded-xl px-3 h-12 text-white text-base outline-none focus:border-emerald-500"
             />
           </div>
 
           <div>
-            <label className="block text-[10px] font-black uppercase tracking-widest text-white/40 mb-1">
-              Nombre *
+            <label className="block text-[11px] font-black uppercase tracking-widest text-white/45 mb-1">
+              {byWeight ? "Precio por kg *" : "Precio *"}
             </label>
-            <input
-              ref={nameRef}
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              required
-              className="w-full bg-black border border-white/10 rounded-xl px-3 py-2.5 text-white text-sm outline-none focus:border-emerald-500"
+            <MoneyInput
+              aria-label="Precio"
+              value={price}
+              onChange={setPrice}
+              onEnter={() => handleSubmit()}
+              autoFocus={Boolean(name)}
+              className="w-full bg-black border-2 border-emerald-500/50 rounded-xl px-3 h-14 text-2xl font-black text-white outline-none focus:border-emerald-400"
             />
           </div>
 
-          <label className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/5 px-3 py-2.5 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={byWeight}
-              onChange={(e) => setByWeight(e.target.checked)}
-              className="h-4 w-4 accent-emerald-500"
-            />
-            <span className="text-[11px] font-bold text-white/70">Se vende por peso (kg)</span>
-          </label>
+          <button
+            type="button"
+            aria-pressed={byWeight}
+            onClick={() => setByWeight((v) => !v)}
+            className={`w-full h-12 rounded-xl border text-xs font-black uppercase tracking-widest flex items-center justify-center gap-2 ${
+              byWeight ? "bg-emerald-500/20 border-emerald-500/50 text-emerald-200" : "bg-white/5 border-white/10 text-white/50"
+            }`}
+          >
+            <ScaleIcon className="w-5 h-5" /> {byWeight ? "Se vende por peso ✓" : "Se vende por peso"}
+          </button>
 
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-[10px] font-black uppercase tracking-widest text-white/40 mb-1">
-                {byWeight ? "Precio / kg *" : "Precio *"}
-              </label>
-              <input
-                type="number"
-                inputMode="decimal"
-                min={1}
-                required
-                value={price}
-                onChange={(e) => setPrice(e.target.value === "" ? "" : Number(e.target.value))}
-                className="w-full bg-black border border-white/10 rounded-xl px-3 py-2.5 text-white text-sm outline-none focus:border-emerald-500"
-              />
-            </div>
-            <div>
-              <label className="block text-[10px] font-black uppercase tracking-widest text-white/40 mb-1">
-                {byWeight ? "Stock (kg)" : "Stock"}
-              </label>
-              <input
-                type="number"
-                inputMode="decimal"
-                min={0}
-                step={byWeight ? 0.001 : 1}
-                value={stock}
-                onChange={(e) => setStock(Number(e.target.value) || 0)}
-                className="w-full bg-black border border-white/10 rounded-xl px-3 py-2.5 text-white text-sm outline-none focus:border-emerald-500"
-              />
-            </div>
+          <div>
+            <label className="block text-[11px] font-black uppercase tracking-widest text-white/45 mb-1">
+              Código de barras
+            </label>
+            <input
+              value={barcode}
+              data-scan-accept
+              onChange={(e) => setBarcode(e.target.value)}
+              placeholder="Sin código (pan, fruta…): se genera uno"
+              className="w-full bg-black border border-white/15 rounded-xl px-3 h-12 text-white font-mono text-sm outline-none focus:border-emerald-500"
+            />
           </div>
 
           <div className="flex gap-2 pt-2">
             <button
               type="button"
               onClick={onClose}
-              className="flex-1 h-11 rounded-xl bg-white/5 text-white/60 text-xs font-black uppercase tracking-widest hover:bg-white/10 transition-colors"
+              className="flex-1 h-14 rounded-xl bg-white/5 text-white/60 text-xs font-black uppercase tracking-widest"
             >
               Cancelar
             </button>
             <button
               type="submit"
               disabled={saving}
-              className="flex-[2] h-11 rounded-xl bg-emerald-500 text-black text-xs font-black uppercase tracking-widest flex items-center justify-center gap-2 disabled:opacity-50 active:bg-emerald-600 transition-colors"
+              className="flex-[2] h-14 rounded-xl bg-emerald-500 text-black text-xs font-black uppercase tracking-widest flex items-center justify-center gap-2 disabled:opacity-50 active:bg-emerald-600"
             >
               {saving && <ArrowPathIcon className="h-4 w-4 animate-spin" />}
               Crear y agregar
@@ -186,6 +193,17 @@ export default function QuickCreateProductModal({
           </div>
         </form>
       </div>
+
+      {avisos && (
+        <Confirmar
+          titulo="¿Seguro?"
+          avisos={avisos}
+          acciones={[
+            { label: "Sí, crear", tono: "primario", onClick: () => void crear() },
+            { label: "Corregir", tono: "neutro", onClick: () => setAvisos(null) },
+          ]}
+        />
+      )}
     </div>
   );
 }

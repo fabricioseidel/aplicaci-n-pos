@@ -6,8 +6,10 @@ import React, {
   useState,
   useEffect,
   useCallback,
+  useRef,
   ReactNode,
 } from "react";
+import { useSession } from "next-auth/react";
 import type { Branch } from "@/types";
 
 const STORAGE_KEY = "pos.branchId.v1";
@@ -17,71 +19,84 @@ interface BranchContextType {
   branches: Branch[];
   currentBranch: Branch | null;
   setBranch: (branch: Branch) => void;
+  /** true mientras se piden las sucursales y todavía no hay ninguna elegida. */
   isLoading: boolean;
+  /** Vuelve a pedir las sucursales (botón "Reintentar" de la caja). */
+  reload: () => Promise<void>;
 }
 
 const BranchContext = createContext<BranchContextType | undefined>(undefined);
 
 export function BranchProvider({ children }: { children: ReactNode }) {
+  const { status } = useSession();
   const [branches, setBranches] = useState<Branch[]>([]);
   const [currentBranch, setCurrentBranch] = useState<Branch | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  // La última carga desde el servidor salió bien. Si no (401 en /login, sin
+  // red), se reintenta cuando la sesión pase a "authenticated".
+  const cargadoDelServidor = useRef(false);
 
   const applyList = useCallback((list: Branch[]) => {
     setBranches(list);
-    const savedId = typeof window !== "undefined" ? localStorage.getItem(STORAGE_KEY) : null;
+    let savedId: string | null = null;
+    try {
+      savedId = localStorage.getItem(STORAGE_KEY);
+    } catch {
+      /* sin localStorage: se usa la por defecto */
+    }
     const restored = savedId ? list.find((b) => b.id === savedId) : null;
     const defaultBranch = list.find((b) => b.is_default) ?? list[0];
     setCurrentBranch(restored ?? defaultBranch ?? null);
   }, []);
 
+  // Sin red, las sucursales salen de localStorage. La sucursal es obligatoria
+  // para armar una venta, así que el POS no puede quedar bloqueado esperando
+  // una respuesta que no va a llegar.
   useEffect(() => {
-    let cancelled = false;
-
-    // Sin red, las sucursales salen de localStorage. La sucursal es obligatoria
-    // para armar una venta, así que el POS no puede quedar bloqueado esperando
-    // una respuesta que no va a llegar.
-    const loadCached = () => {
-      try {
-        const raw = localStorage.getItem(CACHE_KEY);
-        if (!raw) return false;
-        const list = JSON.parse(raw) as Branch[];
-        if (!Array.isArray(list) || list.length === 0) return false;
-        applyList(list);
-        return true;
-      } catch {
-        return false;
-      }
-    };
-
-    const hadCache = loadCached();
-
-    fetch("/api/branches", { cache: "no-store" })
-      .then((res) => {
-        if (!res.ok) throw new Error(String(res.status));
-        return res.json();
-      })
-      .then((data: { branches?: Branch[] }) => {
-        if (cancelled) return;
-        const list = data.branches ?? [];
-        applyList(list);
-        try {
-          localStorage.setItem(CACHE_KEY, JSON.stringify(list));
-        } catch {
-          /* cuota llena: seguimos igual, sólo perdemos el modo offline */
-        }
-      })
-      .catch(() => {
-        if (!hadCache) console.warn("[branches] sin red y sin caché local");
-      })
-      .finally(() => {
-        if (!cancelled) setIsLoading(false);
-      });
-
-    return () => {
-      cancelled = true;
-    };
+    try {
+      const raw = localStorage.getItem(CACHE_KEY);
+      if (!raw) return;
+      const list = JSON.parse(raw) as Branch[];
+      if (Array.isArray(list) && list.length > 0) applyList(list);
+    } catch {
+      /* caché ilegible: se espera al servidor */
+    }
   }, [applyList]);
+
+  const reload = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      const res = await fetch("/api/branches", { cache: "no-store" });
+      if (!res.ok) throw new Error(String(res.status));
+      const data = (await res.json()) as { branches?: Branch[] };
+      const list = data.branches ?? [];
+      applyList(list);
+      cargadoDelServidor.current = true;
+      try {
+        localStorage.setItem(CACHE_KEY, JSON.stringify(list));
+      } catch {
+        /* cuota llena: seguimos igual, sólo perdemos el modo offline */
+      }
+    } catch {
+      // Queda lo que había en caché (si había). En /login esto es un 401
+      // esperable: se reintenta solo al autenticarse.
+    } finally {
+      setIsLoading(false);
+    }
+  }, [applyList]);
+
+  // Antes se pedía una sola vez al montar. El provider vive en el layout
+  // raíz, así que en /login ese pedido daba 401 y, como el login no
+  // remontaba nada, la sucursal quedaba en null hasta recargar: la caja se
+  // abría sin sucursal. Ahora se vuelve a pedir cuando la sesión aparece.
+  useEffect(() => {
+    if (status === "loading") return;
+    if (status === "unauthenticated") {
+      setIsLoading(false);
+      return;
+    }
+    if (!cargadoDelServidor.current) void reload();
+  }, [status, reload]);
 
   const setBranch = useCallback((branch: Branch) => {
     setCurrentBranch(branch);
@@ -93,7 +108,15 @@ export function BranchProvider({ children }: { children: ReactNode }) {
   }, []);
 
   return (
-    <BranchContext.Provider value={{ branches, currentBranch, setBranch, isLoading }}>
+    <BranchContext.Provider
+      value={{
+        branches,
+        currentBranch,
+        setBranch,
+        isLoading: isLoading && !currentBranch,
+        reload,
+      }}
+    >
       {children}
     </BranchContext.Provider>
   );

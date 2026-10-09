@@ -2,9 +2,13 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { BoltIcon, XMarkIcon, ArrowPathIcon, ArrowsRightLeftIcon } from "@heroicons/react/24/outline";
-import { saveProduct, DEFAULT_IMAGE } from "@/services/products";
+import { saveProduct, DEFAULT_IMAGE, ProductExistsError, usarProductoExistente } from "@/services/products";
 import { useToast } from "@/contexts/ToastContext";
 import { searchProducts } from "@/lib/pos/search";
+import MoneyInput from "@/components/ui/MoneyInput";
+import Confirmar from "@/components/operaciones/productos/Confirmar";
+import { revisarPrecio } from "@/lib/products/edicion";
+import { parseCantidad } from "@/lib/num";
 import type { ProductUI } from "@/types";
 
 interface QuickCreateReceptionModalProps {
@@ -43,7 +47,11 @@ export default function QuickCreateReceptionModal({
   const { showToast } = useToast();
   const [barcode, setBarcode] = useState(initialBarcode);
   const [name, setName] = useState(initialName);
-  const [quantity, setQuantity] = useState(1);
+  const [cantidadTexto, setCantidadTexto] = useState("1");
+  const quantity = parseCantidad(cantidadTexto) ?? 0;
+  /** Precio de venta: sin él el producto entra a $0 y no se puede vender. */
+  const [price, setPrice] = useState<number | null>(null);
+  const [avisos, setAvisos] = useState<string[] | null>(null);
   const [saving, setSaving] = useState(false);
   const [dismissedSuggestions, setDismissedSuggestions] = useState(false);
   const nameRef = useRef<HTMLInputElement>(null);
@@ -69,11 +77,10 @@ export default function QuickCreateReceptionModal({
     onMerge(product, quantity);
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const trimmedName = name.trim();
-
-    if (!trimmedName) {
+  const handleSubmit = (e?: React.FormEvent) => {
+    e?.preventDefault();
+    if (saving) return;
+    if (!name.trim()) {
       showToast("El nombre es obligatorio", "error");
       return;
     }
@@ -81,24 +88,35 @@ export default function QuickCreateReceptionModal({
       showToast("Indica la cantidad", "error");
       return;
     }
+    const a = price
+      ? revisarPrecio(null, price)
+      : ["Sin precio no se puede vender: en Venta te lo van a pedir. Queda en el filtro «Sin precio»."];
+    if (a.length > 0) {
+      setAvisos(a);
+      return;
+    }
+    void crear();
+  };
 
+  const crear = async () => {
+    setAvisos(null);
+    const trimmedName = name.trim();
     const trimmedBarcode = barcode.trim() || generateInternalCode();
 
     setSaving(true);
     try {
-      await saveProduct({
-        barcode: trimmedBarcode,
-        name: trimmedName,
-        sale_price: 0,
-        stock: 0,
-        is_active: true,
-      });
+      // Sin stock: el alta entra con 0 y la cantidad la suma la recepción
+      // misma. Mandar `stock: 0` sobre un código existente lo vaciaba.
+      await saveProduct(
+        { barcode: trimmedBarcode, name: trimmedName, is_active: true, ...(price ? { sale_price: price } : {}) },
+        { crear: true }
+      );
 
       const product: ProductUI = {
         id: trimmedBarcode,
         barcode: trimmedBarcode,
         name: trimmedName,
-        price: 0,
+        price: price ?? 0,
         image: DEFAULT_IMAGE,
         slug: trimmedName.toLowerCase().trim().replace(/\s+/g, "-"),
         description: "",
@@ -112,6 +130,18 @@ export default function QuickCreateReceptionModal({
       showToast(`Producto creado: ${trimmedName}`, "success");
       onCreated(product, quantity);
     } catch (err) {
+      if (err instanceof ProductExistsError) {
+        const existente = await usarProductoExistente(err.existente.barcode).catch(() => null);
+        if (existente) {
+          showToast(
+            `${err.message}${err.existente.isActive ? "" : ": lo reactivé"} y le sumé la cantidad`,
+            "warning",
+            5000
+          );
+          onMerge(existente, quantity);
+          return;
+        }
+      }
       showToast(err instanceof Error ? err.message : "Error al crear el producto", "error");
     } finally {
       setSaving(false);
@@ -126,13 +156,12 @@ export default function QuickCreateReceptionModal({
             <BoltIcon className="h-5 w-5" />
             <h2 className="text-sm font-black uppercase tracking-widest">Producto nuevo</h2>
           </div>
-          <button type="button" onClick={onClose} className="text-white/40 hover:text-white">
+          <button type="button" onClick={onClose} aria-label="Cerrar" className="p-2 -mr-2 text-white/50 hover:text-white">
             <XMarkIcon className="h-5 w-5" />
           </button>
         </div>
         <p className="text-xs text-white/40 mb-4">
-          No está en el catálogo. Cárgalo con lo esencial para sumarle stock ahora; precio y
-          categoría se completan después en la pestaña Productos.
+          No está en el catálogo. Ponle nombre, cantidad y precio de venta: sin precio no se puede vender.
         </p>
 
         <form onSubmit={handleSubmit} className="space-y-3">
@@ -197,6 +226,7 @@ export default function QuickCreateReceptionModal({
               </label>
               <input
                 value={barcode}
+                data-scan-accept
                 onChange={(e) => setBarcode(e.target.value)}
                 placeholder="Opcional"
                 className="w-full bg-black border border-white/10 rounded-xl px-3 py-2.5 text-white font-mono text-sm outline-none focus:border-emerald-500"
@@ -207,30 +237,42 @@ export default function QuickCreateReceptionModal({
                 Cantidad *
               </label>
               <input
-                type="number"
                 inputMode="decimal"
-                min={0}
-                step="any"
-                required
-                value={quantity}
-                onChange={(e) => setQuantity(Number(e.target.value) || 0)}
-                className="w-full bg-black border border-white/10 rounded-xl px-3 py-2.5 text-white text-sm outline-none focus:border-emerald-500"
+                data-scan-guard
+                value={cantidadTexto}
+                onChange={(e) => setCantidadTexto(e.target.value)}
+                onFocus={(e) => e.currentTarget.select()}
+                className="w-full bg-black border border-white/10 rounded-xl px-3 h-12 text-white text-lg font-black outline-none focus:border-emerald-500"
               />
             </div>
+          </div>
+
+          <div>
+            <label className="block text-[10px] font-black uppercase tracking-widest text-white/40 mb-1">
+              Precio de venta
+            </label>
+            <MoneyInput
+              aria-label="Precio de venta"
+              value={price}
+              onChange={setPrice}
+              onEnter={() => handleSubmit()}
+              placeholder="Sin precio"
+              className="w-full bg-black border-2 border-emerald-500/40 rounded-xl px-3 h-12 text-xl font-black text-white outline-none focus:border-emerald-400"
+            />
           </div>
 
           <div className="flex gap-2 pt-2">
             <button
               type="button"
               onClick={onClose}
-              className="flex-1 h-11 rounded-xl bg-white/5 text-white/60 text-xs font-black uppercase tracking-widest hover:bg-white/10 transition-colors"
+              className="flex-1 h-14 rounded-xl bg-white/5 text-white/60 text-xs font-black uppercase tracking-widest hover:bg-white/10 transition-colors"
             >
               Cancelar
             </button>
             <button
               type="submit"
               disabled={saving}
-              className="flex-[2] h-11 rounded-xl bg-emerald-500 text-black text-xs font-black uppercase tracking-widest flex items-center justify-center gap-2 disabled:opacity-50 active:bg-emerald-600 transition-colors"
+              className="flex-[2] h-14 rounded-xl bg-emerald-500 text-black text-xs font-black uppercase tracking-widest flex items-center justify-center gap-2 disabled:opacity-50 active:bg-emerald-600 transition-colors"
             >
               {saving && <ArrowPathIcon className="h-4 w-4 animate-spin" />}
               Crear y agregar
@@ -238,6 +280,17 @@ export default function QuickCreateReceptionModal({
           </div>
         </form>
       </div>
+
+      {avisos && (
+        <Confirmar
+          titulo={price ? "¿Seguro?" : "¿Crear sin precio?"}
+          avisos={avisos}
+          acciones={[
+            { label: price ? "Sí, crear" : "Crear sin precio", tono: "primario", onClick: () => void crear() },
+            { label: price ? "Corregir" : "Ponerle precio", tono: "neutro", onClick: () => setAvisos(null) },
+          ]}
+        />
+      )}
     </div>
   );
 }

@@ -60,7 +60,6 @@ export default function PasoEfectivo({ draft, patch, sencilloInicial, ingresos, 
                   type="number"
                   inputMode="numeric"
                   aria-label={`Cantidad de ${d}`}
-                  data-laser-passthrough
                   value={q === 0 ? "" : q}
                   onChange={(e) => setCount(d, Number(e.target.value) || 0)}
                   placeholder="0"

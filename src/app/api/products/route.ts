@@ -5,38 +5,48 @@ import { errorResponse, successResponse } from "@/lib/api-response";
 import { mapSupaToUI, PRODUCT_COLUMNS } from "@/services/products";
 import { applyCount, type CountItem } from "@/server/stock-count.service";
 import type { SupaProduct } from "@/types";
+import { codigosConCostoDeProveedor, filaParaRol } from "@/server/productos.service";
 
 export const dynamic = "force-dynamic";
 
 /**
  * GET /api/products — catálogo completo para el POS.
+ * GET /api/products?estado=inactivos — sólo los desactivados (filtro
+ * "Inactivos" de Productos, para poder reactivarlos: antes desaparecían).
  *
  * A diferencia del catálogo público de la tienda, acá NO se filtra por
  * "producto visible" (foto + categoría + precio): en el mostrador hay que
  * poder cobrar un producto aunque le falte la foto. Sólo se excluyen los
  * explícitamente inactivos.
  *
+ * Costos y márgenes sólo para ADMIN (misma política que OlivoWeb). Al ADMIN se
+ * le dice además qué productos tienen el costo fijado por un proveedor.
+ *
  * El service worker cachea esta respuesta (NetworkFirst) para que el catálogo
  * siga navegable sin conexión.
  */
-export async function GET() {
+export async function GET(req: Request) {
   const auth = await requireApiAdminOrSeller();
   if (!auth.ok) return auth.response;
 
   try {
-    const { data, error } = await supabaseServer
-      .from("products")
-      .select(PRODUCT_COLUMNS)
-      // `is_active IS NULL` cuenta como activo (registros antiguos). Un
-      // `.neq("is_active", false)` los dejaría fuera, porque en SQL
-      // `NULL != false` no es true.
-      .or("is_active.is.null,is_active.eq.true")
-      .order("updated_at", { ascending: false })
-      .limit(5000);
+    const inactivos = new URL(req.url).searchParams.get("estado") === "inactivos";
+
+    let q = supabaseServer.from("products").select(PRODUCT_COLUMNS);
+    // `is_active IS NULL` cuenta como activo (registros antiguos). Un
+    // `.neq("is_active", false)` los dejaría fuera, porque en SQL
+    // `NULL != false` no es true.
+    q = inactivos ? q.eq("is_active", false) : q.or("is_active.is.null,is_active.eq.true");
+    const { data, error } = await q.order("updated_at", { ascending: false }).limit(5000);
 
     if (error) throw error;
 
-    const items = ((data ?? []) as unknown as SupaProduct[]).map(mapSupaToUI);
+    const filas = (data ?? []) as unknown as Array<SupaProduct & Record<string, unknown>>;
+    const conProveedor = auth.role === "ADMIN" ? await codigosConCostoDeProveedor() : null;
+    const items = filas.map((f) => {
+      const p = mapSupaToUI(filaParaRol(f, auth.role) as SupaProduct);
+      return conProveedor ? { ...p, costoProveedor: conProveedor.has(String(f.barcode)) } : p;
+    });
     return NextResponse.json({ items });
   } catch (e) {
     return errorResponse(e);
@@ -49,14 +59,19 @@ export async function GET() {
  * Evita que un despliegue de la base fuera de fase tumbe la creación de
  * productos desde el mostrador.
  */
-async function upsertProductsWithColumnFallback(payloadsInput: Record<string, unknown>[]) {
+async function upsertProductsWithColumnFallback(
+  payloadsInput: Record<string, unknown>[],
+  soloAlta = false
+) {
   let payloads = payloadsInput.map((p) => ({ ...p }));
   let lastError: unknown;
 
   for (let attempt = 0; attempt < 8; attempt++) {
-    const { error } = await supabaseServer
-      .from("products")
-      .upsert(payloads, { onConflict: "barcode" });
+    // Un alta va con INSERT: si entre la verificación y la escritura alguien
+    // creó el mismo código, choca (23505) en vez de pisarlo.
+    const { error } = soloAlta
+      ? await supabaseServer.from("products").insert(payloads)
+      : await supabaseServer.from("products").upsert(payloads, { onConflict: "barcode" });
     if (!error) return;
 
     lastError = error;
@@ -85,20 +100,39 @@ async function upsertProductsWithColumnFallback(payloadsInput: Record<string, un
   throw lastError;
 }
 
+/** Campos que el formulario viejo mandaba en null/0 aunque no los mostrara. */
+const NO_PISAR_SI_VACIO = ["min_stock", "optimum_stock", "description", "measurement_value"] as const;
+
+/**
+ * Campos del formulario que un cliente viejo (sin `v: 2`) mandaba vacíos al
+ * crear sobre un código existente: en un producto que ya existe no se pisan.
+ */
+const NO_PISAR_SI_VACIO_LEGACY = ["category", "image_url", "offer_price"] as const;
+
+const vacio = (v: unknown) => v === null || v === undefined || v === "";
+
+type Existente = { barcode: string; name: string | null; is_active: boolean | null; stock: number | null };
+
 /**
  * POST /api/products — crea o actualiza por `barcode`.
  *
- * `stock` recibe un trato aparte: NO se escribe en `products`. La columna es
- * derivada de `branch_stock` (un trigger la recalcula en cada escritura), así
- * que hasta ahora el número que se escribía acá se descartaba en silencio —
- * el mostrador editaba el stock, veía el toast de éxito y el valor volvía
- * solo. Antes de que existiera ese trigger era peor: la edición de un
- * producto pisaba el stock real con el que el navegador tenía cacheado y
- * revertía la recepción que otra persona acababa de registrar.
+ * Guardar un producto sólo escribe lo que el formulario realmente maneja.
+ * Antes cada guardado mandaba también `purchase_price: 0`, `min_stock: null`,
+ * etc., y borraba el costo y los mínimos de todo producto editado desde el
+ * mostrador; además el stock que mostraba la pantalla se aplicaba como ajuste
+ * absoluto y revertía las ventas hechas mientras la ficha estaba abierta.
  *
- * Ahora la cantidad que llega se aplica como un ajuste absoluto sobre la
- * sucursal (`apply_stock_absolute`, motivo `MANUAL_ADJUSTMENT`): mueve el
- * stock de verdad y queda el rastro en `inventory_movements`.
+ * Reglas:
+ * - `purchase_price` sólo se escribe si es > 0; los campos de
+ *   `NO_PISAR_SI_VACIO` nunca se escriben vacíos.
+ * - `stock` no va a `products` (es derivado de `branch_stock`). En un alta se
+ *   aplica como stock inicial. En un producto existente sólo se aplica si el
+ *   cliente manda `stockAnterior` (lo que vio al abrir la ficha), lo cambió, y
+ *   el stock real sigue siendo ese; si alguien vendió o recibió entretanto, no
+ *   se aplica y se avisa. Un cliente viejo (sin `stockAnterior`) no mueve stock.
+ * - `crear: true` sobre un código que ya existe responde 409 con el producto
+ *   existente, en vez de sobrescribirlo.
+ * - Un alta sin `is_active` queda activa (el default de la columna es false).
  */
 export async function POST(req: Request) {
   const auth = await requireApiAdminOrSeller();
@@ -127,23 +161,91 @@ export async function POST(req: Request) {
       if (!item?.barcode) return errorResponse(new Error("Missing barcode"), 400);
     }
 
+    const barcodes = items.map((i) => String(i.barcode));
+    const { data: filas, error: errExistentes } = await supabaseServer
+      .from("products")
+      .select("barcode, name, is_active, stock")
+      .in("barcode", barcodes);
+    if (errExistentes) throw errExistentes;
+    const existentes = new Map(((filas ?? []) as Existente[]).map((f) => [String(f.barcode), f]));
+
+    for (const item of items) {
+      const actual = existentes.get(String(item.barcode));
+      if (item.crear === true && actual) {
+        const nombre = actual.name ?? "otro producto";
+        return NextResponse.json(
+          {
+            error: `Ese código ya es «${nombre}»${actual.is_active === false ? " (desactivado)" : ""}`,
+            existente: {
+              barcode: actual.barcode,
+              name: actual.name,
+              isActive: actual.is_active !== false,
+            },
+          },
+          { status: 409 }
+        );
+      }
+    }
+
     // El stock sale del payload y se aplica aparte, sobre branch_stock.
     const stockObjetivo: CountItem[] = [];
+    const avisos: string[] = [];
     const payloads = items.map((item) => {
-      const { stock, ...resto } = item;
-      const qty = Number(stock);
-      if (stock !== undefined && stock !== null && Number.isFinite(qty) && qty >= 0) {
-        stockObjetivo.push({ barcode: String(item.barcode), qty });
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { stock, stockAnterior, crear, v, ...resto } = item;
+      const codigo = String(item.barcode);
+      const actual = existentes.get(codigo);
+
+      if (!(Number(resto.purchase_price) > 0)) delete resto.purchase_price;
+      for (const k of NO_PISAR_SI_VACIO) if (vacio(resto[k])) delete resto[k];
+
+      if (actual) {
+        if (v !== 2) {
+          for (const k of NO_PISAR_SI_VACIO_LEGACY) if (vacio(resto[k])) delete resto[k];
+          if (!(Number(resto.sale_price) > 0)) delete resto.sale_price;
+        }
+      } else if (resto.is_active === undefined) {
+        resto.is_active = true;
       }
+
+      const qty = Number(stock);
+      const stockValido = stock !== undefined && stock !== null && Number.isFinite(qty) && qty >= 0;
+      if (stockValido && !actual) {
+        stockObjetivo.push({ barcode: codigo, qty });
+      } else if (stockValido && actual && stockAnterior !== undefined && stockAnterior !== null) {
+        const anterior = Number(stockAnterior);
+        const real = Number(actual.stock ?? 0);
+        if (Math.abs(qty - anterior) > 1e-9) {
+          if (Math.abs(real - anterior) < 1e-9) {
+            stockObjetivo.push({ barcode: codigo, qty });
+          } else {
+            avisos.push(
+              `El stock de ${actual.name ?? codigo} cambió a ${real} mientras editabas: no se aplicó tu cambio`
+            );
+          }
+        }
+      }
+
       return resto;
     });
 
     // Los productos primero: `apply_stock_absolute` ignora los códigos que no
     // existen todavía, así que un alta con stock necesita este orden.
-    await upsertProductsWithColumnFallback(payloads);
+    const soloAlta = items.every((i) => i.crear === true);
+    try {
+      await upsertProductsWithColumnFallback(payloads, soloAlta);
+    } catch (e) {
+      if (soloAlta && (e as { code?: string })?.code === "23505") {
+        return NextResponse.json(
+          { error: "Ese código ya existe", existente: { barcode: barcodes[0], name: null, isActive: true } },
+          { status: 409 }
+        );
+      }
+      throw e;
+    }
 
     let stockAplicado = 0;
-    let stockError: string | null = null;
+    let stockError: string | null = avisos.length > 0 ? avisos.join(". ") : null;
 
     if (stockObjetivo.length > 0) {
       const branchId =
@@ -161,7 +263,7 @@ export async function POST(req: Request) {
       if (res.ok) stockAplicado = res.ajustados;
       // El producto ya quedó guardado; que falle el ajuste de stock no puede
       // hacer parecer que no se guardó nada. Se informa aparte.
-      else stockError = res.error;
+      else stockError = [stockError, res.error].filter(Boolean).join(". ");
     }
 
     return successResponse({
