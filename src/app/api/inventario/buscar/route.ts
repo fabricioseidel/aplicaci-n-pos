@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseServer } from "@/lib/supabase-server";
 import { requireApiAdminOrSeller } from "@/lib/api-auth";
-import { mapSupaToUI, PRODUCT_COLUMNS } from "@/services/products";
+import { mapSupaToUI } from "@/services/products";
+import { conColumnasDeProducto } from "@/server/productos.service";
 import type { SupaProduct } from "@/types";
 
 export const dynamic = "force-dynamic";
@@ -25,11 +26,9 @@ export async function GET(request: NextRequest) {
     const barcode = (params.get("barcode") ?? "").trim();
 
     if (barcode) {
-      const { data, error } = await supabaseServer
-        .from("products")
-        .select(PRODUCT_COLUMNS)
-        .eq("barcode", barcode)
-        .maybeSingle();
+      const { data, error } = await conColumnasDeProducto((cols) =>
+        supabaseServer.from("products").select(cols).eq("barcode", barcode).maybeSingle()
+      );
 
       if (error) throw error;
 
@@ -44,12 +43,9 @@ export async function GET(request: NextRequest) {
     // Escapar comodines para que el texto se busque literal.
     const patron = `%${q.replace(/[\\%_]/g, "\\$&")}%`;
 
-    const { data, error } = await supabaseServer
-      .from("products")
-      .select(PRODUCT_COLUMNS)
-      .ilike("name", patron)
-      .order("name")
-      .limit(25);
+    const { data, error } = await conColumnasDeProducto((cols) =>
+      supabaseServer.from("products").select(cols).ilike("name", patron).order("name").limit(25)
+    );
 
     if (error) throw error;
 

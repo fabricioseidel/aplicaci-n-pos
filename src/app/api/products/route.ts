@@ -2,10 +2,10 @@ import { NextResponse } from "next/server";
 import { supabaseServer } from "@/lib/supabase-server";
 import { requireApiAdminOrSeller } from "@/lib/api-auth";
 import { errorResponse, successResponse } from "@/lib/api-response";
-import { mapSupaToUI, PRODUCT_COLUMNS } from "@/services/products";
+import { mapSupaToUI } from "@/services/products";
 import { applyCount, type CountItem } from "@/server/stock-count.service";
 import type { SupaProduct } from "@/types";
-import { codigosConCostoDeProveedor, filaParaRol } from "@/server/productos.service";
+import { codigosConCostoDeProveedor, conColumnasDeProducto, filaParaRol } from "@/server/productos.service";
 
 export const dynamic = "force-dynamic";
 
@@ -32,12 +32,15 @@ export async function GET(req: Request) {
   try {
     const inactivos = new URL(req.url).searchParams.get("estado") === "inactivos";
 
-    let q = supabaseServer.from("products").select(PRODUCT_COLUMNS);
-    // `is_active IS NULL` cuenta como activo (registros antiguos). Un
-    // `.neq("is_active", false)` los dejaría fuera, porque en SQL
-    // `NULL != false` no es true.
-    q = inactivos ? q.eq("is_active", false) : q.or("is_active.is.null,is_active.eq.true");
-    const { data, error } = await q.order("updated_at", { ascending: false }).limit(5000);
+    const { data, error } = await conColumnasDeProducto((cols) => {
+      const q = supabaseServer.from("products").select(cols);
+      // `is_active IS NULL` cuenta como activo (registros antiguos). Un
+      // `.neq("is_active", false)` los dejaría fuera, porque en SQL
+      // `NULL != false` no es true.
+      return (inactivos ? q.eq("is_active", false) : q.or("is_active.is.null,is_active.eq.true"))
+        .order("updated_at", { ascending: false })
+        .limit(5000);
+    });
 
     if (error) throw error;
 

@@ -1,10 +1,11 @@
 import type { SupaProduct, ProductUI } from "@/types";
+import { ofertaVigente } from "@/lib/pos/precios";
 
 export const DEFAULT_IMAGE = "/file.svg";
 
 /** Columnas que el POS necesita de `products`. */
 export const PRODUCT_COLUMNS =
-  "barcode, name, category, sale_price, offer_price, purchase_price, image_url, stock, featured, is_active, by_weight, measurement_unit, measurement_value, suggested_price, min_stock, optimum_stock, description, updated_at";
+  "barcode, name, category, sale_price, offer_price, purchase_price, image_url, stock, featured, is_active, by_weight, measurement_unit, measurement_value, suggested_price, min_stock, optimum_stock, description, updated_at, offer_ends_at";
 
 function slugify(s: string): string {
   return s
@@ -23,7 +24,11 @@ export function mapSupaToUI(p: SupaProduct): ProductUI {
     : [];
 
   const rawSalePrice = Number(p.sale_price ?? 0);
-  const rawOfferPrice = p.offer_price ? Number(p.offer_price) : undefined;
+  // Una oferta vencida no viaja: para el catálogo es como si no existiera.
+  // La fecha sí viaja, porque el catálogo cacheado puede durar más que la
+  // oferta y `unitPriceOf` la vuelve a mirar al cobrar.
+  const rawOfferPrice =
+    p.offer_price && ofertaVigente(Number(p.offer_price), p.offer_ends_at) ? Number(p.offer_price) : undefined;
 
   return {
     id: String(p.barcode),
@@ -32,6 +37,9 @@ export function mapSupaToUI(p: SupaProduct): ProductUI {
     // Para productos por peso este precio es POR KILO.
     price: Math.round(rawSalePrice),
     offerPrice: rawOfferPrice ? Math.round(rawOfferPrice) : undefined,
+    // null (no undefined) para que sobreviva al JSON y pise una fecha vieja
+    // guardada en el carrito.
+    offerEndsAt: rawOfferPrice && p.offer_ends_at ? p.offer_ends_at : null,
     image: p.image_url || DEFAULT_IMAGE,
     slug: slugify(name),
     description: p.description || "",
