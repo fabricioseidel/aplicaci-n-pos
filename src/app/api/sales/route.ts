@@ -168,7 +168,11 @@ export async function POST(req: Request) {
       ((fichasRows ?? []) as (PrecioFicha & { barcode: string })[]).map((f) => [String(f.barcode), f])
     );
     const esperado = totalEsperado(
-      body.items.map((it) => ({ barcode: String(it.barcode), qty: Number(it.qty) })),
+      body.items.map((it) => ({
+        barcode: String(it.barcode),
+        qty: Number(it.qty),
+        discount: Number(it.discount ?? 0),
+      })),
       fichas,
       Boolean(body.isStaffPurchase)
     );
@@ -272,7 +276,14 @@ export async function POST(req: Request) {
       notes:
         [body.notes,
           buyer && attendant && attendant.id !== buyer.id ? `Atendió: ${attendant.name}` : null,
-          notaPrecio, sinPrecio.length > 0 ? `Línea sin precio: ${sinPrecio.map((it) => it.name ?? it.barcode).join(", ")}` : null]
+          notaPrecio,
+          // Precio sólo para esta venta: queda a la vista en la venta.
+          body.items.some((it) => Number(it.discount) > 0)
+            ? `Precio especial: ${body.items
+                .filter((it) => Number(it.discount) > 0)
+                .map((it) => `${it.name ?? it.barcode} −$${Math.round(Number(it.discount))}`)
+                .join(", ")}${attendant ? ` (${attendant.name})` : ""}`
+            : null, sinPrecio.length > 0 ? `Línea sin precio: ${sinPrecio.map((it) => it.name ?? it.barcode).join(", ")}` : null]
           .filter(Boolean)
           .join(" · ") || null,
       soldAt: horaDeLaVenta(body.soldAt),

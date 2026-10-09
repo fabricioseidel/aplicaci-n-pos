@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
-import { usePOS, unitPriceOf, lineSubtotal } from "@/contexts/POSContext";
+import { usePOS, unitPriceOf, lineSubtotal, lineDiscount, type POSItem } from "@/contexts/POSContext";
 import { useBranch } from "@/contexts/BranchContext";
 import { useToast } from "@/contexts/ToastContext";
 import { useSync } from "@/contexts/SyncContext";
@@ -32,7 +32,7 @@ import {
   MagnifyingGlassIcon, XMarkIcon, TrashIcon, MinusIcon, PlusIcon,
   BanknotesIcon, CreditCardIcon, ArrowPathIcon, CheckCircleIcon,
   ShoppingBagIcon, CameraIcon, PlusCircleIcon, ScaleIcon, CloudArrowUpIcon,
-  ArrowLeftIcon, ArrowUturnLeftIcon,
+  ArrowLeftIcon, ArrowUturnLeftIcon, ReceiptPercentIcon,
 } from "@heroicons/react/24/outline";
 
 const PRODUCTS_PER_PAGE = 40;
@@ -67,7 +67,7 @@ export default function SaleMode({ shiftId }: SaleModeProps) {
   const {
     cart, addToCart, setQuantity, removeFromCart, clearCart, total, itemCount,
     compraPropia, setCompraPropia, porCobrar, setPorCobrar, comprador, setComprador,
-    resetSale, restored, dismissRestored, applyCatalog, updateLineProduct,
+    resetSale, restored, dismissRestored, applyCatalog, updateLineProduct, setPrecioEspecial,
   } = usePOS();
   const { currentBranch } = useBranch();
   const { showToast } = useToast();
@@ -92,6 +92,9 @@ export default function SaleMode({ shiftId }: SaleModeProps) {
   /** Efectivo muy por encima del total: se pide confirmar antes de cobrar. */
   const [confirmarEfectivo, setConfirmarEfectivo] = useState(false);
   const [ultimaVenta, setUltimaVenta] = useState<UltimaVenta | null>(null);
+  /** Línea a la que se le pone un precio sólo para esta venta. */
+  const [especialDe, setEspecialDe] = useState<POSItem | null>(null);
+  const [especialMonto, setEspecialMonto] = useState<number | null>(null);
   /** Carrito recién vaciado, para "Deshacer". */
   const [vaciado, setVaciado] = useState<typeof cart | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
@@ -233,7 +236,7 @@ export default function SaleMode({ shiftId }: SaleModeProps) {
   // lectura en ese momento se descarta con aviso en vez de escribirse ahí.
   useScan(
     handleCode,
-    !showScanner && !weighing && quickCreateBarcode === null && !sinPrecio && !confirmarEfectivo
+    !showScanner && !weighing && quickCreateBarcode === null && !sinPrecio && !confirmarEfectivo && !especialDe
   );
 
   const setFila = (idx: number, patch: Partial<FilaPago>) => {
@@ -337,6 +340,8 @@ export default function SaleMode({ shiftId }: SaleModeProps) {
             qty: item.quantity,
             unit_price: unitPriceOf(item),
             subtotal: lineSubtotal(item),
+            // Precio sólo para esta venta: la diferencia con la ficha.
+            discount: lineDiscount(item),
           })),
         },
       });
@@ -616,9 +621,28 @@ export default function SaleMode({ shiftId }: SaleModeProps) {
               <div className="flex justify-between items-start gap-2 mb-2">
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-bold leading-tight">{item.name}</p>
-                  <p className="text-xs text-emerald-400 font-bold">
-                    {clp(unitPriceOf(item))} {item.byWeight ? "por kg" : "c/u"}
-                  </p>
+                  {item.precioEspecial !== undefined ? (
+                    <p className="text-xs font-bold">
+                      <span className="text-white/40 line-through mr-1">{clp(unitPriceOf(item))}</span>
+                      <span className="text-amber-300">
+                        {clp(item.precioEspecial)} {item.byWeight ? "por kg" : "c/u"} · precio especial
+                      </span>
+                    </p>
+                  ) : (
+                    <p className="text-xs text-emerald-400 font-bold">
+                      {clp(unitPriceOf(item))} {item.byWeight ? "por kg" : "c/u"}
+                    </p>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEspecialDe(item);
+                      setEspecialMonto(item.precioEspecial ?? null);
+                    }}
+                    className="mt-1 inline-flex items-center gap-1 h-9 px-2 -ml-2 rounded-lg text-[11px] font-black uppercase tracking-wide text-white/50"
+                  >
+                    <ReceiptPercentIcon className="h-4 w-4" /> Precio especial
+                  </button>
                 </div>
                 <button
                   onClick={() => removeFromCart(item.id)}
@@ -962,6 +986,63 @@ export default function SaleMode({ shiftId }: SaleModeProps) {
             setWeighing(null);
           }}
         />
+      )}
+
+      {/* Precio sólo para esta venta: no cambia la ficha (eso es Productos). */}
+      {especialDe && (
+        <div className="fixed inset-0 z-[120] bg-black/85 flex items-end sm:items-center justify-center p-4">
+          <div className="w-full max-w-sm bg-[#111] border border-amber-500/30 rounded-2xl p-5 text-white space-y-3">
+            <div>
+              <p className="text-base font-black">{especialDe.name}</p>
+              <p className="text-xs text-white/60">
+                Precio de la ficha: {clp(unitPriceOf(especialDe))} {especialDe.byWeight ? "por kg" : "c/u"}. Este
+                precio vale sólo para esta venta.
+              </p>
+            </div>
+            <MoneyInput
+              autoFocus
+              value={especialMonto}
+              onChange={setEspecialMonto}
+              aria-label="Precio para esta venta"
+              className="w-full bg-black border-2 border-white/10 rounded-2xl px-4 h-16 text-3xl font-black text-white text-center outline-none focus:border-amber-500"
+            />
+            {especialMonto !== null && especialMonto >= unitPriceOf(especialDe) && (
+              <p className="text-xs font-bold text-red-300">Tiene que ser menor que el precio de la ficha.</p>
+            )}
+            <div className="flex gap-2">
+              {especialDe.precioEspecial !== undefined && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPrecioEspecial(especialDe.id, undefined);
+                    setEspecialDe(null);
+                  }}
+                  className="flex-1 h-14 rounded-xl bg-white/5 text-xs font-black uppercase tracking-widest"
+                >
+                  Quitar
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setEspecialDe(null)}
+                className="flex-1 h-14 rounded-xl bg-white/5 text-xs font-black uppercase tracking-widest"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={!especialMonto || especialMonto < 1 || especialMonto >= unitPriceOf(especialDe)}
+                onClick={() => {
+                  setPrecioEspecial(especialDe.id, especialMonto ?? undefined);
+                  setEspecialDe(null);
+                }}
+                className="flex-[1.4] h-14 rounded-xl bg-amber-500 text-black text-xs font-black uppercase tracking-widest disabled:opacity-30"
+              >
+                Aplicar
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {sinPrecio && (

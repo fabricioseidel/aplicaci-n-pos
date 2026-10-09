@@ -22,6 +22,8 @@ export function precioUnitario(f: PrecioFicha): number {
 export interface LineaVenta {
   barcode: string;
   qty: number;
+  /** Descuento de la línea (precio especial para esta venta). */
+  discount?: number;
 }
 
 /**
@@ -42,7 +44,10 @@ export function totalEsperado(
       faltantes.push(l.barcode);
       continue;
     }
-    suma += Math.round(precioUnitario(f) * Number(l.qty));
+    const bruto = Math.round(precioUnitario(f) * Number(l.qty));
+    // Un descuento por línea no puede ser negativo ni mayor que la línea.
+    const desc = Math.min(bruto, Math.max(0, Math.round(Number(l.discount ?? 0))));
+    suma += bruto - desc;
   }
   const descuento = compraPropia ? Math.round(suma * STAFF_DISCOUNT_RATE) : 0;
   return { total: suma - descuento, faltantes };

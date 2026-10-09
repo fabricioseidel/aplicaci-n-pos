@@ -30,3 +30,18 @@ describe("precios del servidor", () => {
     expect(totalEsperado([{ barcode: "x", qty: 1 }], fichas, false).faltantes).toEqual(["x"]);
   });
 });
+
+describe("precio especial (descuento por línea)", () => {
+  it("resta el descuento de la línea", () => {
+    expect(totalEsperado([{ barcode: "coca", qty: 3, discount: 600 }], fichas, false).total).toBe(2400);
+  });
+
+  it("no acepta descuentos negativos ni mayores que la línea", () => {
+    expect(totalEsperado([{ barcode: "coca", qty: 1, discount: -500 }], fichas, false).total).toBe(1000);
+    expect(totalEsperado([{ barcode: "coca", qty: 1, discount: 5000 }], fichas, false).total).toBe(0);
+  });
+
+  it("compra propia: el 25% va sobre lo que queda", () => {
+    expect(totalEsperado([{ barcode: "coca", qty: 2, discount: 400 }], fichas, true).total).toBe(1200);
+  });
+});
