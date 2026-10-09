@@ -52,7 +52,7 @@ describe("GET /api/inventario/recepcion", () => {
       regla: { margen: 0.3, redondeo: "terminacion90", origen: "categoria" },
     });
     expect(por.pepsi).toMatchObject({ costoDelProveedor: true, regla: { margen: 0.2, origen: "producto" } });
-    expect(por.pan).toMatchObject({ costoNeto: null, regla: { margen: 0.35, origen: "general" } });
+    expect(por.pan).toMatchObject({ costoNeto: 0, regla: { margen: 0.35, origen: "general" } });
   });
 
   it("a una vendedora no le manda el costo", async () => {

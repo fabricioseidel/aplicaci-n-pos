@@ -6,10 +6,19 @@ import { useBranch } from "@/contexts/BranchContext";
 import { useSync } from "@/contexts/SyncContext";
 import { apiWrite } from "@/lib/offline/apiWrite";
 import { readCachedProducts } from "@/lib/offline/db";
+import { parseRecepcion, recepcionKey } from "@/lib/inventario/recepcion";
 
 export interface InventoryItem {
   product: ProductUI;
   quantity: number;
+  /** Creado en esta recepción: se le ofrece precio sugerido. */
+  nuevo?: boolean;
+  /** Costo de la factura tipeado en esta recepción (con IVA). */
+  costoFactura?: number | null;
+  /** El costo de la factura no era el que tenía: se ofrece el precio sugerido. */
+  costoCambiado?: boolean;
+  /** "No, dejar el precio": no se vuelve a sugerir en esta línea. */
+  sugerenciaDescartada?: boolean;
 }
 
 export type QuickInventoryMode = "reception" | "transfer";
@@ -27,6 +36,35 @@ export function useQuickInventory(mode: QuickInventoryMode = "reception") {
   const { refreshPending } = useSync();
 
   const [items, setItems] = useState<InventoryItem[]>([]);
+  /** Productos recuperados del teléfono al abrir (para el aviso "Seguimos…"). */
+  const [recuperados, setRecuperados] = useState(0);
+  /** Clave cuya lista ya se leyó: hasta entonces no se escribe (ni se borra) nada. */
+  const [cargadaKey, setCargadaKey] = useState<string | null>(null);
+  const key = recepcionKey(mode);
+
+  // La lista vive en el teléfono hasta confirmarse, como el carrito: cambiar
+  // de pestaña o que Android cierre la app no borra lo ya escaneado.
+  useEffect(() => {
+    try {
+      const guardada = parseRecepcion(window.localStorage.getItem(key));
+      const lista = guardada?.items ?? [];
+      setItems(lista);
+      setRecuperados(lista.length);
+    } catch {
+      setItems([]);
+    }
+    setCargadaKey(key);
+  }, [key]);
+
+  useEffect(() => {
+    if (cargadaKey !== key) return;
+    try {
+      if (items.length === 0) window.localStorage.removeItem(key);
+      else window.localStorage.setItem(key, JSON.stringify({ items, savedAt: Date.now() }));
+    } catch {
+      /* sin localStorage (modo privado): se recibe igual, sin respaldo */
+    }
+  }, [items, key, cargadaKey]);
   /**
    * Espejo de `items` para poder consultarlo sin meter la lectura dentro del
    * updater de setState: en StrictMode React invoca el updater dos veces, y
@@ -101,13 +139,13 @@ export function useQuickInventory(mode: QuickInventoryMode = "reception") {
    * de fusión) sin pasar por la búsqueda por código de `addItem`: ya se tiene
    * el objeto completo, así que no hay nada que resolver contra el catálogo.
    */
-  const addProduct = useCallback((product: ProductUI, quantity: number) => {
+  const addProduct = useCallback((product: ProductUI, quantity: number, opts?: { nuevo?: boolean }) => {
     setError(null);
     setSuccess(null);
     const key = product.barcode || product.id;
     setItems((prev) => {
       const idx = prev.findIndex((item) => (item.product.barcode || item.product.id) === key);
-      if (idx === -1) return [...prev, { product, quantity }];
+      if (idx === -1) return [...prev, { product, quantity, ...(opts?.nuevo ? { nuevo: true } : {}) }];
       const next = [...prev];
       next[idx] = { ...next[idx], quantity: next[idx].quantity + quantity };
       return next;
@@ -127,6 +165,18 @@ export function useQuickInventory(mode: QuickInventoryMode = "reception") {
       )
     );
   }, []);
+
+  /** Cambia datos de una línea que no son la cantidad (producto editado, costo tipeado…). */
+  const updateLine = useCallback(
+    (barcode: string, cambios: Partial<Omit<InventoryItem, "quantity">>) => {
+      setItems((prev) =>
+        prev.map((i) =>
+          i.product.barcode === barcode || i.product.id === barcode ? { ...i, ...cambios } : i
+        )
+      );
+    },
+    []
+  );
 
   const clear = useCallback(() => {
     setItems([]);
@@ -204,6 +254,9 @@ export function useQuickInventory(mode: QuickInventoryMode = "reception") {
     addItem,
     addProduct,
     updateQuantity,
+    updateLine,
+    recuperados,
+    descartarAvisoRecuperados: () => setRecuperados(0),
     confirm,
     clear,
     isScanning,

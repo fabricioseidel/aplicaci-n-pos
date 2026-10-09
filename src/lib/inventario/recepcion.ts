@@ -60,7 +60,7 @@ export interface InfoRecepcion {
   barcode: string;
   /** `sale_price` sin redondear: va como `expected` del PATCH. */
   precio: number | null;
-  /** `purchase_price` neto sin redondear; `null` si no hay o si quien pregunta no lo ve. */
+  /** `purchase_price` neto sin redondear (0 = sin costo); `null` si no hay o si quien pregunta no lo ve. */
   costoNeto: number | null;
   /** El costo lo fija un proveedor: aquí es solo lectura. */
   costoDelProveedor: boolean;

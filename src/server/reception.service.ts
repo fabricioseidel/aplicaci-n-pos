@@ -95,7 +95,8 @@ export async function infoRecepcion(
     return {
       barcode,
       precio: num(p.sale_price),
-      costoNeto: verCosto && costo !== null && costo > 0 ? costo : null,
+      // Sin redondear y tal cual (0 incluido): es el `expected` del PATCH.
+      costoNeto: verCosto ? costo : null,
       costoDelProveedor: conProveedor.has(barcode),
       regla: reglaDeMargen(
         { category: (p.category as string | null) ?? null, margin_override: p.margin_override },
