@@ -131,6 +131,7 @@ export async function PATCH(req: Request, ctx: Ctx) {
       const nombres: Record<string, string> = {
         sale_price: "el precio",
         offer_price: "la oferta",
+        offer_ends_at: "la fecha de la oferta",
         purchase_price: "el costo",
         name: "el nombre",
       };

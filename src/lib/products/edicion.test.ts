@@ -119,3 +119,24 @@ describe("revisarOferta", () => {
     expect(revisarOferta(1000, null)).toEqual([]);
   });
 });
+
+describe("oferta hasta (offer_ends_at)", () => {
+  it("acepta una fecha y la normaliza a ISO, o null para quitarla", () => {
+    expect(validarCambios({ offer_ends_at: "2026-10-15T23:59:59-03:00" })).toEqual({
+      ok: true,
+      changes: { offer_ends_at: "2026-10-16T02:59:59.000Z" },
+    });
+    expect(validarCambios({ offer_ends_at: null })).toEqual({ ok: true, changes: { offer_ends_at: null } });
+  });
+
+  it("rechaza lo que no es fecha", () => {
+    expect(validarCambios({ offer_ends_at: "mañana" }).ok).toBe(false);
+    expect(validarCambios({ offer_ends_at: 5 }).ok).toBe(false);
+  });
+
+  it("la misma fecha con otro formato no cuenta como cambio si se pasa el original", () => {
+    const fila = { offer_ends_at: "2026-10-16T02:59:59+00:00" };
+    expect(diffProduct(fila, { offer_ends_at: fila.offer_ends_at }).changes).toEqual({});
+    expect(diffProduct(fila, { offer_ends_at: null }).changes).toEqual({ offer_ends_at: null });
+  });
+});

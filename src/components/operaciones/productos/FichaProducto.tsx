@@ -17,6 +17,8 @@ import {
   margenSobreVenta,
 } from "@/lib/products/edicion";
 import { formatMiles, parseCantidad } from "@/lib/num";
+import { ofertaVigente } from "@/lib/pos/precios";
+import { fechaChile, fechaCorta, finDelDiaChile, hoyChile } from "@/lib/products/oferta";
 import type { ProductUI } from "@/types";
 import Confirmar, { type AccionConfirmar } from "./Confirmar";
 import AjustarStock from "./AjustarStock";
@@ -31,6 +33,8 @@ interface Form {
   price: number | null;
   offer: number | null;
   verOferta: boolean;
+  /** "Oferta hasta" como "YYYY-MM-DD" (día en Chile); "" = sin fecha de término. */
+  ofertaHasta: string;
   costoBruto: number | null;
   byWeight: boolean;
   unit: string;
@@ -51,6 +55,7 @@ function formDesde(f: FilaProducto | null, nuevo?: { barcode?: string; name?: st
     price: f ? num(f.sale_price) : null,
     offer: f ? num(f.offer_price) || null : null,
     verOferta: Boolean(f && Number(f.offer_price) > 0),
+    ofertaHasta: fechaChile(f?.offer_ends_at as string | null | undefined),
     costoBruto: f && Number(f.purchase_price) > 0 ? costoBrutoDesdeNeto(Number(f.purchase_price)) : null,
     byWeight: Boolean(f?.by_weight),
     unit: (f?.measurement_unit as string) || "kg",
@@ -62,6 +67,18 @@ function formDesde(f: FilaProducto | null, nuevo?: { barcode?: string; name?: st
     imageUrl: (f?.image_url as string) ?? "",
     stockInicial: "",
   };
+}
+
+/**
+ * Lo que se guarda en `offer_ends_at`. Si la fecha no cambió se devuelve el
+ * valor original tal cual (PostgREST lo formatea distinto y si no el diff lo
+ * vería como cambio).
+ */
+function offerEndsAtDe(form: Form, fila: FilaProducto | null): string | null {
+  if (!form.verOferta || !form.ofertaHasta) return null;
+  const original = (fila?.offer_ends_at as string | null | undefined) ?? null;
+  if (original && fechaChile(original) === form.ofertaHasta) return original;
+  return finDelDiaChile(form.ofertaHasta);
 }
 
 export interface ResultadoFicha {
@@ -151,6 +168,7 @@ export default function FichaProducto({
       name: form.name,
       sale_price: form.price,
       offer_price: form.verOferta ? form.offer : null,
+      offer_ends_at: offerEndsAtDe(form, fila),
       by_weight: form.byWeight,
       is_active: form.isActive,
       category: form.category,
@@ -274,6 +292,9 @@ export default function FichaProducto({
     const precioAntes = fila ? Number(fila.sale_price) : null;
     if (esAlta || form.price !== precioAntes) avisos.push(...revisarPrecio(precioAntes, form.price));
     if (form.verOferta) avisos.push(...revisarOferta(form.price, form.offer));
+    if (form.verOferta && form.ofertaHasta && form.ofertaHasta < hoyChile() && editado.offer_ends_at !== fila?.offer_ends_at) {
+      avisos.push(`La fecha de la oferta ya pasó (${fechaCorta(form.ofertaHasta)}): se cobrará el precio normal`);
+    }
 
     const seguir = () => (esAlta ? void crear() : void ejecutarPatch());
 
@@ -347,6 +368,9 @@ export default function FichaProducto({
   const precioUnidad = form.byWeight ? `/ ${form.unit || "kg"}` : "";
   const margen = margenSobreVenta(form.price, form.costoBruto);
   const desactivado = !esAlta && fila?.is_active === false;
+  const ofertaVencida = Boolean(
+    form.offer && form.ofertaHasta && !ofertaVigente(form.offer, finDelDiaChile(form.ofertaHasta))
+  );
 
   return (
     <div className="max-w-xl mx-auto w-full p-4 space-y-4 pb-32">
@@ -441,11 +465,21 @@ export default function FichaProducto({
 
       {/* Oferta */}
       {form.verOferta ? (
-        <div className="rounded-2xl border border-amber-500/40 bg-amber-500/10 p-4 space-y-2">
+        <div
+          className={`rounded-2xl border p-4 space-y-2 ${
+            ofertaVencida ? "border-white/15 bg-white/5" : "border-amber-500/40 bg-amber-500/10"
+          }`}
+        >
           <div className="flex items-center gap-2">
-            <TagIcon className="w-5 h-5 text-amber-300" />
-            <p className="flex-1 text-sm font-bold text-amber-200">
-              {form.offer ? `En oferta a ${clp(form.offer)}: se cobra este precio, no el normal` : "Precio de oferta"}
+            <TagIcon className={`w-5 h-5 ${ofertaVencida ? "text-white/40" : "text-amber-300"}`} />
+            <p data-testid="banda-oferta" className={`flex-1 text-sm font-bold ${ofertaVencida ? "text-white/60" : "text-amber-200"}`}>
+              {!form.offer
+                ? "Precio de oferta"
+                : ofertaVencida
+                  ? `La oferta de ${clp(form.offer)} venció el ${fechaCorta(form.ofertaHasta)}: se cobra el precio normal`
+                  : `En oferta a ${clp(form.offer)}${
+                      form.ofertaHasta ? ` hasta el ${fechaCorta(form.ofertaHasta)}` : ""
+                    }: se cobra este precio, no el normal`}
             </p>
           </div>
           <div className="flex gap-2">
@@ -458,11 +492,41 @@ export default function FichaProducto({
             />
             <button
               type="button"
-              onClick={() => set({ verOferta: false, offer: null })}
+              onClick={() => set({ verOferta: false, offer: null, ofertaHasta: "" })}
               className="h-12 px-4 rounded-xl bg-white/5 border border-white/10 text-white/70 text-xs font-black uppercase tracking-widest"
             >
               Quitar oferta
             </button>
+          </div>
+          <div>
+            <label htmlFor="oferta-hasta" className={etiqueta}>
+              Oferta hasta (opcional)
+            </label>
+            <div className="flex gap-2">
+              <input
+                id="oferta-hasta"
+                type="date"
+                value={form.ofertaHasta}
+                min={esAlta ? hoyChile() : undefined}
+                onChange={(e) => set({ ofertaHasta: e.target.value })}
+                data-scan-guard
+                className={`${campo} flex-1 min-w-0 [color-scheme:dark]`}
+              />
+              {form.ofertaHasta && (
+                <button
+                  type="button"
+                  onClick={() => set({ ofertaHasta: "" })}
+                  className="h-12 px-4 rounded-xl bg-white/5 border border-white/10 text-white/70 text-xs font-black uppercase tracking-widest"
+                >
+                  Sin fecha
+                </button>
+              )}
+            </div>
+            <p className="mt-1 text-[11px] text-white/35">
+              {form.ofertaHasta
+                ? `Vale todo el ${fechaCorta(form.ofertaHasta)}; después se cobra el precio normal solo.`
+                : "Sin fecha, la oferta sigue hasta que la quites."}
+            </p>
           </div>
         </div>
       ) : (
