@@ -19,12 +19,13 @@ import {
   type CartLine,
   type SaleDraft,
 } from "@/lib/pos/cartStorage";
+import { ofertaVigente } from "@/lib/pos/precios";
 
 export type POSItem = CartLine;
 
-/** Precio unitario efectivo: la oferta manda sobre el precio de lista. */
+/** Precio unitario efectivo: la oferta vigente (sin vencer) manda sobre el precio de lista. */
 export function unitPriceOf(p: ProductUI): number {
-  return p.offerPrice && p.offerPrice > 0 ? p.offerPrice : p.price;
+  return p.offerPrice && ofertaVigente(p.offerPrice, p.offerEndsAt) ? p.offerPrice : p.price;
 }
 
 /**
@@ -35,7 +36,18 @@ export function unitPriceOf(p: ProductUI): number {
  * (0.350 kg × $4.990) los decimales sueltos descuadran el arqueo.
  */
 export function lineSubtotal(item: POSItem): number {
+  const precio = item.precioEspecial !== undefined ? item.precioEspecial : unitPriceOf(item);
+  return Math.round(precio * item.quantity);
+}
+
+/** Lo que la línea costaría con el precio de la ficha. */
+export function lineSubtotalFicha(item: POSItem): number {
   return Math.round(unitPriceOf(item) * item.quantity);
+}
+
+/** Descuento de la línea por precio especial (0 si no tiene). */
+export function lineDiscount(item: POSItem): number {
+  return Math.max(0, lineSubtotalFicha(item) - lineSubtotal(item));
 }
 
 type Comprador = SaleDraft["comprador"];
@@ -48,6 +60,8 @@ interface POSContextType {
   updateQuantity: (barcode: string, quantity: number) => void;
   /** Reemplaza los datos de producto de una línea (p. ej. su precio nuevo). */
   updateLineProduct: (product: ProductUI) => void;
+  /** Precio sólo para esta venta; `undefined` lo quita. */
+  setPrecioEspecial: (barcode: string, precio: number | undefined) => void;
   clearCart: () => void;
   total: number;
   itemCount: number;
@@ -164,6 +178,12 @@ export function POSProvider({ children }: { children: ReactNode }) {
     [setItems]
   );
 
+  const setPrecioEspecial = useCallback(
+    (barcode: string, precio: number | undefined) =>
+      setItems((prev) => prev.map((item) => (item.id === barcode ? { ...item, precioEspecial: precio } : item))),
+    [setItems]
+  );
+
   const clearCart = useCallback(() => setItems(() => []), [setItems]);
 
   const resetSale = useCallback(() => {
@@ -186,6 +206,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
       removeFromCart,
       updateQuantity: setQuantity,
       updateLineProduct,
+      setPrecioEspecial,
       clearCart,
       total,
       itemCount,
@@ -202,7 +223,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
       applyCatalog,
     }),
     [
-      cart, addToCart, setQuantity, removeFromCart, updateLineProduct, clearCart, total, itemCount,
+      cart, addToCart, setQuantity, removeFromCart, updateLineProduct, setPrecioEspecial, clearCart, total, itemCount,
       draft.compraPropia, draft.porCobrar, draft.comprador, resetSale, restored, applyCatalog,
     ]
   );

@@ -22,6 +22,7 @@ import FichaProducto, { type ResultadoFicha } from "./productos/FichaProducto";
 import ListaPrecios from "./productos/ListaPrecios";
 import CambiosHoy from "./productos/CambiosHoy";
 import { useEscaneoProductos } from "./productos/useEscaneoProductos";
+import { fechaChile, fechaCorta } from "@/lib/products/oferta";
 
 const PAGE_SIZE = 40;
 const clp = (n: number) => `$${Math.round(n).toLocaleString("es-CL")}`;
@@ -50,7 +51,7 @@ export default function ProductosMode() {
   const esAdmin = (session?.user?.role ?? "").toString().toUpperCase() === "ADMIN";
   const { currentBranch } = useBranch();
   const branchId = currentBranch?.id ?? null;
-  const { products, loading, fromCache, upsertLocal } = useProductCatalog();
+  const { products, loading, fromCache, upsertLocal, refresh } = useProductCatalog();
 
   const [vista, setVista] = useState<Vista>({ tipo: "lista" });
   const [query, setQuery] = useState("");
@@ -165,6 +166,12 @@ export default function ProductosMode() {
         categorias={categorias}
         onClose={cerrarFicha}
         onAbrirOtro={(code) => void abrir(code)}
+        onCodigoCambiado={(code, anterior) => {
+          // El catálogo tiene el código viejo: se recarga entero.
+          void refresh();
+          setUltimo(`✓ Código ${anterior} → ${code}`);
+          setVista({ tipo: "ficha", barcode: code, clave: Date.now() });
+        }}
       />
     );
   }
@@ -338,7 +345,9 @@ export default function ProductosMode() {
                     <>
                       <p className="text-[11px] text-white/40 line-through tabular-nums">{clp(p.price)}</p>
                       <p className="text-base font-black text-amber-300 tabular-nums">{clp(Number(p.offerPrice))}</p>
-                      <span className="text-[9px] font-black uppercase text-amber-300">Oferta</span>
+                      <span className="text-[9px] font-black uppercase text-amber-300">
+                        Oferta{p.offerEndsAt ? ` hasta ${fechaCorta(fechaChile(p.offerEndsAt))}` : ""}
+                      </span>
                     </>
                   ) : (
                     <p className={`text-base font-black tabular-nums ${p.price > 0 ? "text-emerald-400" : "text-red-400"}`}>

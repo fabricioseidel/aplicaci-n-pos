@@ -3,6 +3,11 @@ import type { ProductUI } from "@/types";
 /** Línea del carrito: unidades, o kilos (decimal) para los productos por peso. */
 export interface CartLine extends ProductUI {
   quantity: number;
+  /**
+   * Precio unitario sólo para esta venta (descuento puntual). La ficha no
+   * cambia: la diferencia viaja como `discount` de la línea.
+   */
+  precioEspecial?: number;
 }
 
 /** Venta en curso tal como se guarda en el teléfono. */

@@ -6,7 +6,6 @@ import {
   ArchiveBoxIcon,
   ArrowPathIcon,
   ClipboardDocumentCheckIcon,
-  ExclamationTriangleIcon,
   MagnifyingGlassIcon,
   MinusIcon,
   PlusIcon,
@@ -22,6 +21,9 @@ import { useSync } from "@/contexts/SyncContext";
 import { useToast } from "@/contexts/ToastContext";
 import { apiWrite } from "@/lib/offline/apiWrite";
 import { searchProducts } from "@/lib/pos/search";
+import QtyInput from "@/components/operaciones/inventario/QtyInput";
+import CierreConteo from "@/components/operaciones/inventario/CierreConteo";
+import { crearAntirebote, type ModoCierre } from "@/lib/inventario/conteo";
 import type { ProductUI } from "@/types";
 
 const SEARCH_RESULTS_LIMIT = 8;
@@ -86,8 +88,8 @@ interface Linea {
  * Al cerrar se aplica todo junto y se corrige lo que se vendió o recibió
  * después de cada conteo, así las ventas del día no se pierden.
  *
- * El cierre es lo que responde "qué hay disponible hoy": lo que nunca se
- * escaneó queda en 0 y sale del catálogo.
+ * El cierre aplica solo lo escaneado (conteo de góndola) o, en un conteo
+ * total y solo un ADMIN, además pone en 0 y saca del catálogo lo no escaneado.
  */
 export default function ConteoMode() {
   const { data: authSession } = useSession();
@@ -126,7 +128,7 @@ export default function ConteoMode() {
   const [query, setQuery] = useState("");
   const [creando, setCreando] = useState<{ barcode: string; name: string } | null>(null);
   const buscadorRef = useRef<HTMLInputElement>(null);
-  const ultimoCodigo = useRef<string>("");
+  const antirebote = useRef(crearAntirebote(600));
   const borradorCargado = useRef(false);
   /**
    * Espejo de la sesión activa para poder consultarla desde `agregar`, que se
@@ -213,7 +215,7 @@ export default function ConteoMode() {
         "Vas a poner TODO el stock de esta sucursal en 0 antes de empezar.\n\n" +
           "Mientras dure el conteo la tienda web no va a poder vender nada, porque " +
           "todo va a figurar sin existencias.\n\n" +
-          "No hace falta: al cerrar el conteo, lo que no hayas contado queda en 0 igual.\n\n" +
+          "No hace falta: al cerrar un conteo total, lo que no hayas contado queda en 0 igual.\n\n" +
           "¿Continuar de todas formas?"
       );
       if (!ok) return;
@@ -317,18 +319,14 @@ export default function ConteoMode() {
   );
 
   const onDetected = useCallback(
-    async (code: string) => {
+    async (code: string, source?: string) => {
       const limpio = code.trim();
       if (!limpio) return;
 
-      // El anti-rebote del lector es por código, no global: contar de a una
-      // unidad exige poder escanear el MISMO código muchas veces seguidas,
-      // sólo no dos veces por el mismo destello.
-      if (limpio === ultimoCodigo.current) return;
-      ultimoCodigo.current = limpio;
-      setTimeout(() => {
-        if (ultimoCodigo.current === limpio) ultimoCodigo.current = "";
-      }, 600);
+      // Anti-rebote solo para la cámara (lee el mismo código varias veces en
+      // el mismo destello). El láser no rebota: contar una góndola es pasar
+      // el mismo código muchas veces seguidas y cada lectura es una unidad.
+      if (antirebote.current(limpio, source ?? "laser")) return;
 
       const encontrado = catalogo.find((p) => p.barcode === limpio || p.id === limpio);
       if (encontrado) {
@@ -488,26 +486,12 @@ export default function ConteoMode() {
   };
 
   // ── Cerrar el conteo ──────────────────────────────────────────────
-  const cerrar = async () => {
+  const cerrar = async (modoCierre: ModoCierre, esperadoPendientes?: number) => {
     if (!sesionAbierta) return;
-    const progreso = sesionAbierta;
-
     if (lineas.length > 0) {
       showToast("Guarda primero lo que tienes en la lista", "error");
       return;
     }
-
-    const ok = window.confirm(
-      `Vas a cerrar el conteo.\n\n` +
-        `· ${progreso.contados} productos contados quedan con la cantidad que registraste.\n` +
-        (progreso.applyMode === "ON_CLOSE" && progreso.movidosDesdeElConteo > 0
-          ? `· ${progreso.movidosDesdeElConteo} de ellos se vendieron o recibieron después de contarse: ` +
-            `se les descuenta o suma esa diferencia.\n`
-          : "") +
-        `· ${progreso.pendientes} productos que nunca se escanearon quedan en 0 y dejan de estar disponibles.\n\n` +
-        `Esto es lo que define qué hay en la tienda hoy. ¿Continuar?`
-    );
-    if (!ok) return;
 
     setCerrando(true);
     try {
@@ -515,16 +499,18 @@ export default function ConteoMode() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          sessionId: progreso.sessionId,
-          esperadoPendientes: progreso.pendientes,
+          sessionId: sesionAbierta.sessionId,
+          modo: modoCierre,
+          ...(modoCierre === "todo" ? { esperadoPendientes } : {}),
         }),
       });
       const data = await res.json();
       if (!res.ok) {
         if (res.status === 409) {
           showToast(
-            `El conteo cambió mientras confirmabas (${data.actual} sin contar). Revisa y vuelve a intentar.`,
-            "error"
+            `El conteo cambió mientras confirmabas (ahora ${data.actual} sin contar). Revisa y vuelve a intentar.`,
+            "error",
+            8000
           );
           await cargarProgreso();
           return;
@@ -535,8 +521,11 @@ export default function ConteoMode() {
       showToast(
         `Conteo cerrado: ${data.contados} contados` +
           (data.corregidos > 0 ? `, ${data.corregidos} corregidos por ventas` : "") +
-          `, ${data.desactivados} fuera del catálogo`,
-        "success"
+          (modoCierre === "todo"
+            ? `, ${data.puestosEnCero} puestos en 0, ${data.desactivados} fuera del catálogo`
+            : ". Lo no escaneado quedó igual"),
+        "success",
+        6000
       );
       if (data.enNegativo > 0) {
         // Se vendió más de lo que se contó: o el conteo de ese producto ya
@@ -598,8 +587,10 @@ export default function ConteoMode() {
               es lo que Recepción no podía hacer.
             </p>
             <p>
-              Al cerrar el conteo, lo que no hayas escaneado queda en 0 y deja de estar
-              disponible. Eso es lo que define el catálogo del día.
+              Sirve para <strong className="text-white">una góndola</strong> o para{" "}
+              <strong className="text-white">toda la tienda</strong>. Al cerrar eliges: aplicar solo
+              lo escaneado (lo demás no cambia) o, en un conteo total, poner en 0 lo no contado
+              (solo un administrador, confirmando cuántos productos son).
             </p>
           </div>
 
@@ -661,6 +652,34 @@ export default function ConteoMode() {
             </label>
           </fieldset>
 
+          {esAdmin && (
+            <details className="rounded-2xl border border-white/10 bg-black/20 p-3 text-xs text-white/60 leading-relaxed">
+              <summary className="cursor-pointer min-h-12 flex items-center font-black uppercase tracking-widest text-white/80">
+                Conteo total de la tienda: cómo hacerlo
+              </summary>
+              <ol className="list-decimal pl-5 space-y-1.5 mt-2">
+                <li>
+                  Empieza con <strong className="text-white">«Al cerrar el conteo»</strong>: se puede seguir
+                  vendiendo mientras cuentas.
+                </li>
+                <li>
+                  Recorre por góndola y bodega. Escanea cada envase o escribe la cantidad, y{" "}
+                  <strong className="text-white">guarda al terminar cada góndola</strong>. El mismo producto
+                  en dos lugares se suma.
+                </li>
+                <li>Varias personas pueden contar a la vez, cada una en su teléfono.</li>
+                <li>
+                  Al final, en «Cerrar conteo» → <strong className="text-white">Conteo total</strong>, revisa la
+                  lista de lo que falta: lo que veas en la tienda, escanéalo antes de cerrar.
+                </li>
+                <li>
+                  Escribe el número de productos sin contar para confirmar. Esos quedan en 0 y fuera del
+                  catálogo.
+                </li>
+              </ol>
+            </details>
+          )}
+
           {esAdmin && modo === "LIVE" && (
             <label className="flex items-start gap-3 rounded-2xl border border-amber-500/30 bg-amber-500/5 p-3 cursor-pointer">
               <input
@@ -672,7 +691,7 @@ export default function ConteoMode() {
               <span className="text-xs text-amber-200/80 leading-relaxed">
                 Poner todo en 0 antes de empezar.{" "}
                 <strong>No es necesario</strong> y deja la tienda web sin stock durante todo el
-                conteo: al cerrar, lo no contado queda en 0 igual.
+                conteo: al cerrar un conteo total, lo no contado queda en 0 igual.
               </span>
             </label>
           )}
@@ -970,24 +989,22 @@ export default function ConteoMode() {
                       <button
                         onClick={() => fijarCantidad(l.barcode, l.qty - paso)}
                         aria-label="Restar"
-                        className="w-10 h-10 rounded-xl bg-white/5 flex items-center justify-center active:scale-90 transition-transform"
+                        className="w-12 h-12 rounded-xl bg-white/5 flex items-center justify-center active:scale-90 transition-transform"
                       >
                         <MinusIcon className="w-4 h-4" />
                       </button>
-                      <input
-                        type="number"
-                        inputMode="decimal"
-                        min={0}
-                        step={paso}
+                      <QtyInput
                         value={l.qty}
-                        onChange={(e) => fijarCantidad(l.barcode, Number(e.target.value))}
+                        porPeso={l.byWeight}
+                        permitirCero
+                        onChange={(q) => fijarCantidad(l.barcode, q)}
                         aria-label={`Cantidad contada de ${l.name}`}
-                        className="w-16 bg-transparent text-center text-lg font-black tabular-nums outline-none"
+                        className="w-16 h-12 bg-transparent text-center text-lg font-black tabular-nums outline-none rounded-xl focus:bg-white/10"
                       />
                       <button
                         onClick={() => fijarCantidad(l.barcode, l.qty + paso)}
                         aria-label="Sumar"
-                        className="w-10 h-10 rounded-xl bg-white text-black flex items-center justify-center active:scale-90 transition-transform"
+                        className="w-12 h-12 rounded-xl bg-white text-black flex items-center justify-center active:scale-90 transition-transform"
                       >
                         <PlusIcon className="w-4 h-4" />
                       </button>
@@ -995,7 +1012,7 @@ export default function ConteoMode() {
                     <button
                       onClick={() => quitar(l.barcode)}
                       aria-label="Quitar de la lista"
-                      className="w-10 h-10 rounded-2xl bg-red-500/10 text-red-500 flex items-center justify-center active:scale-90"
+                      className="w-12 h-12 rounded-2xl bg-red-500/10 text-red-500 flex items-center justify-center active:scale-90"
                     >
                       <TrashIcon className="w-4 h-4" />
                     </button>
@@ -1019,38 +1036,15 @@ export default function ConteoMode() {
         {guardando ? "Guardando…" : `Guardar ${lineas.length} contados`}
       </button>
 
-      {/* Cierre: define el catálogo disponible */}
+      {/* Cierre: por defecto aplica solo lo escaneado (conteo de góndola). */}
       {sesionAbierta && (
-        <div className="rounded-2xl border border-red-500/30 bg-red-500/5 p-4 space-y-3 mt-4">
-          <div className="flex items-start gap-2">
-            <ExclamationTriangleIcon className="w-5 h-5 text-red-400 shrink-0 mt-0.5" />
-            <div>
-              <p className="text-sm font-black text-red-300">Cerrar conteo</p>
-              <p className="text-xs text-red-200/70 leading-relaxed mt-1">
-                Los <strong>{sesionAbierta.contados}</strong> contados quedan con la cantidad
-                registrada
-                {sesionAbierta.applyMode === "ON_CLOSE" &&
-                  ", menos lo que se haya vendido después de contarlos"}
-                . Los <strong>{sesionAbierta.pendientes}</strong> productos que nunca se escanearon
-                quedan en 0 y dejan de estar disponibles. Hazlo cuando termines de recorrer la
-                tienda.
-              </p>
-            </div>
-          </div>
-          {esAdmin ? (
-            <button
-              onClick={cerrar}
-              disabled={cerrando}
-              className="w-full rounded-xl bg-red-600 px-4 py-3 text-xs font-black uppercase tracking-widest text-white hover:bg-red-500 disabled:bg-white/10 disabled:text-white/40"
-            >
-              {cerrando ? "Cerrando…" : "Cerrar conteo"}
-            </button>
-          ) : (
-            <p className="text-[10px] font-black uppercase tracking-widest text-white/30">
-              Sólo un administrador puede cerrar el conteo
-            </p>
-          )}
-        </div>
+        <CierreConteo
+          resumen={sesionAbierta}
+          esAdmin={esAdmin}
+          hayLineasSinGuardar={lineas.length > 0}
+          cerrando={cerrando}
+          onCerrar={(m, esperado) => void cerrar(m, esperado)}
+        />
       )}
 
       {creando && (

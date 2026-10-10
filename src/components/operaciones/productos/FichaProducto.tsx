@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeftIcon, ArrowPathIcon, CheckIcon, ChevronDownIcon, ChevronUpIcon,
   ScaleIcon, TagIcon, CubeIcon, CameraIcon, XMarkIcon,
@@ -9,14 +9,17 @@ import MoneyInput from "@/components/ui/MoneyInput";
 import UnifiedScanner from "@/components/scanner/UnifiedScanner";
 import { useToast } from "@/contexts/ToastContext";
 import {
-  fetchFicha, patchProduct, saveProduct, ProductConflictError, ProductExistsError,
+  cambiarCodigo, fetchFicha, patchProduct, saveProduct, subirFoto, ProductConflictError, ProductExistsError,
   type Ficha, type FilaProducto,
 } from "@/services/products";
 import {
   diffProduct, revisarPrecio, revisarOferta, costoBrutoDesdeNeto, costoNetoDesdeBruto,
-  margenSobreVenta,
+  margenSobreVenta, validarNuevoCodigo,
 } from "@/lib/products/edicion";
 import { formatMiles, parseCantidad } from "@/lib/num";
+import { ofertaVigente } from "@/lib/pos/precios";
+import { comprimirFoto } from "@/lib/products/comprimirFoto";
+import { fechaChile, fechaCorta, finDelDiaChile, hoyChile } from "@/lib/products/oferta";
 import type { ProductUI } from "@/types";
 import Confirmar, { type AccionConfirmar } from "./Confirmar";
 import AjustarStock from "./AjustarStock";
@@ -31,6 +34,8 @@ interface Form {
   price: number | null;
   offer: number | null;
   verOferta: boolean;
+  /** "Oferta hasta" como "YYYY-MM-DD" (día en Chile); "" = sin fecha de término. */
+  ofertaHasta: string;
   costoBruto: number | null;
   byWeight: boolean;
   unit: string;
@@ -51,6 +56,7 @@ function formDesde(f: FilaProducto | null, nuevo?: { barcode?: string; name?: st
     price: f ? num(f.sale_price) : null,
     offer: f ? num(f.offer_price) || null : null,
     verOferta: Boolean(f && Number(f.offer_price) > 0),
+    ofertaHasta: fechaChile(f?.offer_ends_at as string | null | undefined),
     costoBruto: f && Number(f.purchase_price) > 0 ? costoBrutoDesdeNeto(Number(f.purchase_price)) : null,
     byWeight: Boolean(f?.by_weight),
     unit: (f?.measurement_unit as string) || "kg",
@@ -62,6 +68,18 @@ function formDesde(f: FilaProducto | null, nuevo?: { barcode?: string; name?: st
     imageUrl: (f?.image_url as string) ?? "",
     stockInicial: "",
   };
+}
+
+/**
+ * Lo que se guarda en `offer_ends_at`. Si la fecha no cambió se devuelve el
+ * valor original tal cual (PostgREST lo formatea distinto y si no el diff lo
+ * vería como cambio).
+ */
+function offerEndsAtDe(form: Form, fila: FilaProducto | null): string | null {
+  if (!form.verOferta || !form.ofertaHasta) return null;
+  const original = (fila?.offer_ends_at as string | null | undefined) ?? null;
+  if (original && fechaChile(original) === form.ofertaHasta) return original;
+  return finDelDiaChile(form.ofertaHasta);
 }
 
 export interface ResultadoFicha {
@@ -80,6 +98,8 @@ interface Props {
   onClose: (resultado?: ResultadoFicha) => void;
   /** El lector leyó otro código: abrir esa ficha (o un alta si no existe). */
   onAbrirOtro: (code: string) => void;
+  /** Un ADMIN corrigió el código: recargar el catálogo y abrir la ficha con el nuevo. */
+  onCodigoCambiado?: (nuevo: string, anterior: string) => void;
 }
 
 const etiqueta = "block text-[11px] font-black uppercase tracking-widest text-white/45 mb-1";
@@ -97,7 +117,7 @@ const campo =
  *   un proveedor.
  */
 export default function FichaProducto({
-  barcode, nuevo, esAdmin, branchId, categorias, onClose, onAbrirOtro,
+  barcode, nuevo, esAdmin, branchId, categorias, onClose: cerrarFicha, onAbrirOtro, onCodigoCambiado,
 }: Props) {
   const { showToast } = useToast();
   const esAlta = !barcode;
@@ -111,6 +131,18 @@ export default function FichaProducto({
   const [confirmar, setConfirmar] = useState<{ titulo: string; avisos?: string[]; acciones: AccionConfirmar[] } | null>(null);
   const [ajustando, setAjustando] = useState(false);
   const [escaneandoCodigo, setEscaneandoCodigo] = useState(false);
+  /** "Corregir código" abierto (texto del código nuevo), o null. */
+  const [codigoNuevo, setCodigoNuevo] = useState<string | null>(null);
+  const [cambiandoCodigo, setCambiandoCodigo] = useState(false);
+  const [subiendoFoto, setSubiendoFoto] = useState(false);
+  /** Producto con la foto nueva: si se cierra sin guardar nada más, igual se informa a la lista. */
+  const conFotoNueva = useRef<ProductUI | null>(null);
+
+  /** Al cerrar sin otro cambio, la lista igual tiene que enterarse de la foto nueva. */
+  const onClose = (r?: ResultadoFicha) => {
+    const p = conFotoNueva.current;
+    cerrarFicha(r ?? (p ? { producto: p, resumen: `Foto de ${p.name} guardada` } : undefined));
+  };
 
   const cargar = useCallback(async () => {
     if (!barcode) return;
@@ -138,6 +170,26 @@ export default function FichaProducto({
 
   const set = (p: Partial<Form>) => setForm((prev) => ({ ...prev, ...p }));
 
+  // ── Foto con la cámara ──────────────────────────────────────────────────
+  const tomarFoto = async (archivo: File | undefined) => {
+    if (!archivo || !barcode) return;
+    setSubiendoFoto(true);
+    try {
+      const foto = await comprimirFoto(archivo);
+      const r = await subirFoto(barcode, foto);
+      conFotoNueva.current = r.producto;
+      // La foto ya quedó guardada: la fila y el formulario la toman como
+      // propia para que no aparezca como "cambio sin guardar".
+      setFicha((prev) => (prev ? { ...prev, fila: { ...prev.fila, image_url: r.url }, producto: r.producto } : prev));
+      set({ imageUrl: r.url });
+      showToast("✓ Foto guardada", "success", 2500);
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : "No se pudo subir la foto", "error", 6000);
+    } finally {
+      setSubiendoFoto(false);
+    }
+  };
+
   const costoEditable = esAdmin && !ficha?.costoDelProveedor;
   const fila = ficha?.fila ?? null;
 
@@ -151,6 +203,7 @@ export default function FichaProducto({
       name: form.name,
       sale_price: form.price,
       offer_price: form.verOferta ? form.offer : null,
+      offer_ends_at: offerEndsAtDe(form, fila),
       by_weight: form.byWeight,
       is_active: form.isActive,
       category: form.category,
@@ -274,6 +327,9 @@ export default function FichaProducto({
     const precioAntes = fila ? Number(fila.sale_price) : null;
     if (esAlta || form.price !== precioAntes) avisos.push(...revisarPrecio(precioAntes, form.price));
     if (form.verOferta) avisos.push(...revisarOferta(form.price, form.offer));
+    if (form.verOferta && form.ofertaHasta && form.ofertaHasta < hoyChile() && editado.offer_ends_at !== fila?.offer_ends_at) {
+      avisos.push(`La fecha de la oferta ya pasó (${fechaCorta(form.ofertaHasta)}): se cobrará el precio normal`);
+    }
 
     const seguir = () => (esAlta ? void crear() : void ejecutarPatch());
 
@@ -317,7 +373,51 @@ export default function FichaProducto({
       ],
     });
   };
-  useEscaneoProductos({ enabled: !ajustando && !confirmar && !escaneandoCodigo, onScan });
+  useEscaneoProductos({
+    enabled: !ajustando && !confirmar && !escaneandoCodigo && codigoNuevo === null,
+    onScan,
+  });
+
+  // ── Corregir el código de barras (sólo ADMIN) ───────────────────────────
+  const pedirCambioDeCodigo = () => {
+    if (!fila || codigoNuevo === null) return;
+    const v = validarNuevoCodigo(fila.barcode, codigoNuevo);
+    if (!v.ok) return showToast(v.error, "error");
+    setConfirmar({
+      titulo: `¿Cambiar el código de ${form.name || "este producto"}?`,
+      avisos: [
+        `${fila.barcode} → ${v.codigo}`,
+        "Sus ventas, stock, conteos y proveedores pasan al código nuevo. El código anterior deja de existir.",
+      ],
+      acciones: [
+        {
+          label: "Sí, cambiar el código",
+          tono: "peligro",
+          onClick: () => {
+            setConfirmar(null);
+            void ejecutarCambioDeCodigo(v.codigo);
+          },
+        },
+        { label: "Cancelar", tono: "neutro", onClick: () => setConfirmar(null) },
+      ],
+    });
+  };
+
+  const ejecutarCambioDeCodigo = async (codigo: string) => {
+    if (!fila) return;
+    setCambiandoCodigo(true);
+    try {
+      const nuevoCodigo = await cambiarCodigo(fila.barcode, codigo);
+      showToast(`✓ Código cambiado: ${nuevoCodigo}`, "success", 4000);
+      setCodigoNuevo(null);
+      if (onCodigoCambiado) onCodigoCambiado(nuevoCodigo, fila.barcode);
+      else onAbrirOtro(nuevoCodigo);
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : "No se pudo cambiar el código", "error", 6000);
+    } finally {
+      setCambiandoCodigo(false);
+    }
+  };
 
   // ── Render ──────────────────────────────────────────────────────────────
   if (cargando) {
@@ -347,6 +447,9 @@ export default function FichaProducto({
   const precioUnidad = form.byWeight ? `/ ${form.unit || "kg"}` : "";
   const margen = margenSobreVenta(form.price, form.costoBruto);
   const desactivado = !esAlta && fila?.is_active === false;
+  const ofertaVencida = Boolean(
+    form.offer && form.ofertaHasta && !ofertaVigente(form.offer, finDelDiaChile(form.ofertaHasta))
+  );
 
   return (
     <div className="max-w-xl mx-auto w-full p-4 space-y-4 pb-32">
@@ -401,7 +504,56 @@ export default function FichaProducto({
           </div>
         </div>
       ) : (
-        <p className="text-[11px] font-mono text-white/40">{fila?.barcode}</p>
+        <div className="flex items-center gap-2">
+          <p className="flex-1 text-[11px] font-mono text-white/40">{fila?.barcode}</p>
+          {esAdmin && fila && (
+            <button
+              type="button"
+              onClick={() =>
+                hayCambios
+                  ? showToast("Guarda o descarta los cambios antes de corregir el código", "warning")
+                  : setCodigoNuevo("")
+              }
+              className="h-9 px-3 rounded-lg bg-white/5 border border-white/10 text-[10px] font-black uppercase tracking-widest text-white/60"
+            >
+              Corregir código
+            </button>
+          )}
+        </div>
+      )}
+
+      {!esAlta && fila && (
+        <div className="flex items-center gap-3">
+          <div className="w-20 h-20 shrink-0 rounded-2xl overflow-hidden bg-white/5 border border-white/10 flex items-center justify-center">
+            {form.imageUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element -- imagen externa sin dimensiones conocidas
+              <img src={form.imageUrl} alt="" data-testid="foto-producto" className="w-full h-full object-cover" />
+            ) : (
+              <CameraIcon className="w-8 h-8 text-white/20" />
+            )}
+          </div>
+          <label
+            className={`flex-1 h-14 rounded-xl border border-emerald-500/30 bg-emerald-500/10 text-emerald-300 text-xs font-black uppercase tracking-widest flex items-center justify-center gap-2 ${
+              subiendoFoto ? "opacity-50 pointer-events-none" : "active:bg-emerald-500/20"
+            }`}
+          >
+            {subiendoFoto ? <ArrowPathIcon className="w-5 h-5 animate-spin" /> : <CameraIcon className="w-5 h-5" />}
+            {subiendoFoto ? "Subiendo foto…" : form.imageUrl ? "Cambiar foto" : "Tomar foto"}
+            <input
+              type="file"
+              accept="image/*"
+              capture="environment"
+              aria-label="Tomar foto"
+              className="sr-only"
+              disabled={subiendoFoto}
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                e.target.value = "";
+                void tomarFoto(f);
+              }}
+            />
+          </label>
+        </div>
       )}
 
       <div>
@@ -441,11 +593,21 @@ export default function FichaProducto({
 
       {/* Oferta */}
       {form.verOferta ? (
-        <div className="rounded-2xl border border-amber-500/40 bg-amber-500/10 p-4 space-y-2">
+        <div
+          className={`rounded-2xl border p-4 space-y-2 ${
+            ofertaVencida ? "border-white/15 bg-white/5" : "border-amber-500/40 bg-amber-500/10"
+          }`}
+        >
           <div className="flex items-center gap-2">
-            <TagIcon className="w-5 h-5 text-amber-300" />
-            <p className="flex-1 text-sm font-bold text-amber-200">
-              {form.offer ? `En oferta a ${clp(form.offer)}: se cobra este precio, no el normal` : "Precio de oferta"}
+            <TagIcon className={`w-5 h-5 ${ofertaVencida ? "text-white/40" : "text-amber-300"}`} />
+            <p data-testid="banda-oferta" className={`flex-1 text-sm font-bold ${ofertaVencida ? "text-white/60" : "text-amber-200"}`}>
+              {!form.offer
+                ? "Precio de oferta"
+                : ofertaVencida
+                  ? `La oferta de ${clp(form.offer)} venció el ${fechaCorta(form.ofertaHasta)}: se cobra el precio normal`
+                  : `En oferta a ${clp(form.offer)}${
+                      form.ofertaHasta ? ` hasta el ${fechaCorta(form.ofertaHasta)}` : ""
+                    }: se cobra este precio, no el normal`}
             </p>
           </div>
           <div className="flex gap-2">
@@ -458,11 +620,41 @@ export default function FichaProducto({
             />
             <button
               type="button"
-              onClick={() => set({ verOferta: false, offer: null })}
+              onClick={() => set({ verOferta: false, offer: null, ofertaHasta: "" })}
               className="h-12 px-4 rounded-xl bg-white/5 border border-white/10 text-white/70 text-xs font-black uppercase tracking-widest"
             >
               Quitar oferta
             </button>
+          </div>
+          <div>
+            <label htmlFor="oferta-hasta" className={etiqueta}>
+              Oferta hasta (opcional)
+            </label>
+            <div className="flex gap-2">
+              <input
+                id="oferta-hasta"
+                type="date"
+                value={form.ofertaHasta}
+                min={esAlta ? hoyChile() : undefined}
+                onChange={(e) => set({ ofertaHasta: e.target.value })}
+                data-scan-guard
+                className={`${campo} flex-1 min-w-0 [color-scheme:dark]`}
+              />
+              {form.ofertaHasta && (
+                <button
+                  type="button"
+                  onClick={() => set({ ofertaHasta: "" })}
+                  className="h-12 px-4 rounded-xl bg-white/5 border border-white/10 text-white/70 text-xs font-black uppercase tracking-widest"
+                >
+                  Sin fecha
+                </button>
+              )}
+            </div>
+            <p className="mt-1 text-[11px] text-white/35">
+              {form.ofertaHasta
+                ? `Vale todo el ${fechaCorta(form.ofertaHasta)}; después se cobra el precio normal solo.`
+                : "Sin fecha, la oferta sigue hasta que la quites."}
+            </p>
           </div>
         </div>
       ) : (
@@ -679,6 +871,62 @@ export default function FichaProducto({
                 setEscaneandoCodigo(false);
               }}
             />
+          </div>
+        </div>
+      )}
+
+      {codigoNuevo !== null && fila && (
+        <div
+          role="dialog"
+          aria-label="Corregir código de barras"
+          className="fixed inset-0 z-[120] bg-black/80 backdrop-blur-sm flex items-end sm:items-center justify-center p-4"
+        >
+          <div className="w-full max-w-md bg-[#111] border border-white/15 rounded-3xl p-5 space-y-4">
+            <div>
+              <p className="text-lg font-black">Corregir código de barras</p>
+              <p className="text-sm text-white/50">
+                Actual: <span className="font-mono text-white/80">{fila.barcode}</span>
+              </p>
+            </div>
+            <div>
+              <label htmlFor="codigo-nuevo" className={etiqueta}>
+                Código nuevo (escanéalo o escríbelo)
+              </label>
+              <input
+                id="codigo-nuevo"
+                value={codigoNuevo}
+                onChange={(e) => setCodigoNuevo(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    pedirCambioDeCodigo();
+                  }
+                }}
+                autoFocus
+                data-scan-accept
+                inputMode="numeric"
+                autoComplete="off"
+                className={`${campo} font-mono text-lg`}
+              />
+            </div>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setCodigoNuevo(null)}
+                className="flex-1 min-h-[3.25rem] rounded-2xl bg-white/5 border border-white/10 text-white/70 text-xs font-black uppercase tracking-widest"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={pedirCambioDeCodigo}
+                disabled={cambiandoCodigo || !codigoNuevo.trim()}
+                className="flex-[2] min-h-[3.25rem] rounded-2xl bg-amber-500 text-black text-xs font-black uppercase tracking-widest flex items-center justify-center gap-2 disabled:opacity-40"
+              >
+                {cambiandoCodigo && <ArrowPathIcon className="w-4 h-4 animate-spin" />}
+                Cambiar código
+              </button>
+            </div>
           </div>
         </div>
       )}

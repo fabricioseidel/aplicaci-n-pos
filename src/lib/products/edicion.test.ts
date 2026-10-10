@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   diffProduct,
   validarCambios,
+  validarNuevoCodigo,
   costoNetoDesdeBruto,
   costoBrutoDesdeNeto,
   margenSobreVenta,
@@ -117,5 +118,38 @@ describe("revisarOferta", () => {
     expect(revisarOferta(1000, 1000)).toHaveLength(1);
     expect(revisarOferta(1000, 900)).toEqual([]);
     expect(revisarOferta(1000, null)).toEqual([]);
+  });
+});
+
+describe("oferta hasta (offer_ends_at)", () => {
+  it("acepta una fecha y la normaliza a ISO, o null para quitarla", () => {
+    expect(validarCambios({ offer_ends_at: "2026-10-15T23:59:59-03:00" })).toEqual({
+      ok: true,
+      changes: { offer_ends_at: "2026-10-16T02:59:59.000Z" },
+    });
+    expect(validarCambios({ offer_ends_at: null })).toEqual({ ok: true, changes: { offer_ends_at: null } });
+  });
+
+  it("rechaza lo que no es fecha", () => {
+    expect(validarCambios({ offer_ends_at: "mañana" }).ok).toBe(false);
+    expect(validarCambios({ offer_ends_at: 5 }).ok).toBe(false);
+  });
+
+  it("la misma fecha con otro formato no cuenta como cambio si se pasa el original", () => {
+    const fila = { offer_ends_at: "2026-10-16T02:59:59+00:00" };
+    expect(diffProduct(fila, { offer_ends_at: fila.offer_ends_at }).changes).toEqual({});
+    expect(diffProduct(fila, { offer_ends_at: null }).changes).toEqual({ offer_ends_at: null });
+  });
+});
+
+describe("validarNuevoCodigo", () => {
+  it("acepta un código distinto, sin espacios alrededor", () => {
+    expect(validarNuevoCodigo("123", " 7801610001196 ")).toEqual({ ok: true, codigo: "7801610001196" });
+  });
+  it("rechaza vacío, igual o con espacios adentro", () => {
+    expect(validarNuevoCodigo("123", "").ok).toBe(false);
+    expect(validarNuevoCodigo("123", "123").ok).toBe(false);
+    expect(validarNuevoCodigo("123", "78 01").ok).toBe(false);
+    expect(validarNuevoCodigo("123", 5).ok).toBe(false);
   });
 });

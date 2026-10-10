@@ -16,6 +16,8 @@ export type SupaProduct = {
   measurement_value?: number | null;
   suggested_price?: number | null;
   offer_price?: number | null;
+  /** Fin de la oferta; NULL = sin fecha de término. */
+  offer_ends_at?: string | null;
   is_active?: boolean | null;
   min_stock?: number | null;
   optimum_stock?: number | null;
@@ -38,6 +40,8 @@ export type ProductUI = {
   measurementValue?: number;
   suggestedPrice?: number;
   offerPrice?: number;
+  /** Fin de la oferta (ISO). null/ausente = la oferta no vence. */
+  offerEndsAt?: string | null;
   isActive?: boolean;
   barcode?: string;
   purchasePrice?: number;

@@ -27,8 +27,8 @@ import { supabaseServer } from "@/lib/supabase-server";
  * Todo pasa por `apply_stock_absolute`, que además es idempotente por `opId`:
  * un reintento del outbox no puede volver a mover el stock.
  *
- * El cierre es lo que responde "qué hay disponible a la fecha": lo que nunca
- * se escaneó queda en 0 y se desactiva.
+ * El cierre aplica lo contado. Solo en un conteo total (ADMIN, ver la ruta
+ * `cerrar`) además deja en 0 y desactiva lo que nunca se escaneó.
  */
 
 /** Cómo se aplica lo contado. Ver el comentario de arriba. */
@@ -275,9 +275,9 @@ export async function countedProduct({
  * Cierra el conteo.
  *
  * En modo `ON_CLOSE` es acá donde se escribe el stock, corrigiendo producto por
- * producto lo que se vendió o recibió después de contarlo. Lo que nunca se
- * contó queda en 0 y sale del catálogo disponible. Es la operación que define
- * "esto es lo que hay hoy".
+ * producto lo que se vendió o recibió después de contarlo. Con
+ * `zeroUncounted`/`deactivateUncounted` (conteo total) lo que nunca se contó
+ * queda en 0 y sale del catálogo; sin ellos (góndola) queda como estaba.
  */
 export async function closeCount({
   sessionId,
@@ -329,4 +329,38 @@ export async function closeCount({
     puestosEnCero: Number(res.puestosEnCero ?? 0),
     desactivados: Number(res.desactivados ?? 0),
   };
+}
+
+/**
+ * Productos activos que todavía no se contaron en la sesión: los que un
+ * cierre "conteo total" pondría en 0 y sacaría del catálogo. Para revisarlos
+ * antes de confirmar.
+ */
+export async function uncountedProducts(
+  sessionId: string,
+  limite = 300
+): Promise<
+  { ok: true; total: number; productos: Array<{ barcode: string; name: string; stock: number }> } | Fallo
+> {
+  const [entradas, productos] = await Promise.all([
+    supabaseServer.from("stock_count_entries").select("product_barcode").eq("session_id", sessionId).limit(50000),
+    supabaseServer
+      .from("products")
+      .select("barcode, name, stock, is_active")
+      .or("is_active.is.null,is_active.eq.true")
+      .order("name", { ascending: true })
+      .limit(50000),
+  ]);
+  if (entradas.error) return { ok: false, error: entradas.error.message };
+  if (productos.error) return { ok: false, error: productos.error.message };
+
+  const contados = new Set(
+    ((entradas.data ?? []) as Array<{ product_barcode: string }>).map((e) => e.product_barcode)
+  );
+  const faltan = ((productos.data ?? []) as Array<{ barcode: string; name: string | null; stock: number | null }>)
+    .filter((p) => !contados.has(p.barcode))
+    .map((p) => ({ barcode: p.barcode, name: p.name ?? "(sin nombre)", stock: Number(p.stock ?? 0) }));
+  // Primero los que tienen stock: son los que el cierre realmente cambia.
+  faltan.sort((a, b) => Number(b.stock > 0) - Number(a.stock > 0));
+  return { ok: true, total: faltan.length, productos: faltan.slice(0, limite) };
 }

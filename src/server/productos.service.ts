@@ -1,10 +1,59 @@
 import { supabaseServer } from "@/lib/supabase-server";
 import type { ApiRole } from "@/lib/api-auth";
 import type { Session } from "next-auth";
+import { PRODUCT_COLUMNS } from "@/services/products";
 
 /**
  * Apoyo de servidor para la edición de productos desde el mostrador.
  */
+
+// ── Columnas nuevas que pueden no estar todavía en la base ───────────────
+
+/**
+ * Columnas de `products` que agregó una migración reciente. Si el código se
+ * despliega antes que la migración, PostgREST rechaza el SELECT entero (42703)
+ * y se caería la venta. Se reintenta sin ellas y se recuerda por 5 minutos.
+ */
+const COLUMNAS_NUEVAS = ["offer_ends_at"] as const;
+let sinColumnasNuevasHasta = 0;
+
+type ErrorPg = { code?: string; message?: string } | null;
+
+function faltaColumnaNueva(error: ErrorPg): boolean {
+  if (!error) return false;
+  const msg = String(error.message ?? "");
+  return (
+    (error.code === "42703" || error.code === "PGRST204" || /does not exist|Could not find/i.test(msg)) &&
+    COLUMNAS_NUEVAS.some((c) => msg.includes(c))
+  );
+}
+
+export function sinColumnasNuevas(cols: string): string {
+  return cols
+    .split(",")
+    .map((c) => c.trim())
+    .filter((c) => c && !(COLUMNAS_NUEVAS as readonly string[]).includes(c))
+    .join(", ");
+}
+
+/**
+ * Corre una consulta a `products` con `cols` (por defecto PRODUCT_COLUMNS) y,
+ * si la base todavía no tiene una columna nueva, la repite sin ella. Sin
+ * `offer_ends_at` toda oferta se trata como "sin fecha de término", que es
+ * exactamente lo que había antes.
+ */
+export async function conColumnasDeProducto<R extends { error: ErrorPg }>(
+  consulta: (cols: string) => PromiseLike<R>,
+  cols: string = PRODUCT_COLUMNS
+): Promise<R> {
+  if (Date.now() >= sinColumnasNuevasHasta) {
+    const r = await consulta(cols);
+    if (!faltaColumnaNueva(r.error)) return r;
+    console.warn("[productos] la base no tiene", COLUMNAS_NUEVAS.join(", "), "(falta la migración): sigo sin ellas");
+    sinColumnasNuevasHasta = Date.now() + 5 * 60_000;
+  }
+  return consulta(sinColumnasNuevas(cols));
+}
 
 /** Columnas que sólo ve un ADMIN (misma política que OlivoWeb #110). */
 const SOLO_ADMIN = ["purchase_price", "suggested_price"] as const;

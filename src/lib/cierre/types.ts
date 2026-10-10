@@ -42,6 +42,8 @@ export interface FiadoInput {
   name: string;
   amount: number;
   note?: string;
+  /** Anotado durante el día (account_entries.id): el cierre lo vuelve a escribir. */
+  entry_id?: string;
 }
 
 /** Pago de una deuda vieja. Entra plata, pero NO es venta de hoy. */
@@ -51,6 +53,8 @@ export interface AbonoInput {
   amount: number;
   method: "CASH" | "TRANSFER" | "CARD";
   note?: string;
+  /** Anotado durante el día (account_entries.id). */
+  entry_id?: string;
 }
 
 export interface CierrePayload {

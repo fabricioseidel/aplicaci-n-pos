@@ -2,11 +2,12 @@ import { NextResponse } from "next/server";
 import { supabaseServer } from "@/lib/supabase-server";
 import { requireApiAdminOrSeller } from "@/lib/api-auth";
 import { errorResponse } from "@/lib/api-response";
-import { mapSupaToUI, PRODUCT_COLUMNS } from "@/services/products";
+import { mapSupaToUI } from "@/services/products";
 import { validarCambios, type Cambios } from "@/lib/products/edicion";
 import {
   actorDe,
   codigosConCostoDeProveedor,
+  conColumnasDeProducto,
   filaParaRol,
   registrarCambiosDePrecio,
   stockEnSucursal,
@@ -20,11 +21,9 @@ export const dynamic = "force-dynamic";
 type Ctx = { params: Promise<{ barcode: string }> };
 
 async function leerFila(barcode: string) {
-  const { data, error } = await supabaseServer
-    .from("products")
-    .select(PRODUCT_COLUMNS)
-    .eq("barcode", barcode)
-    .maybeSingle();
+  const { data, error } = await conColumnasDeProducto((cols) =>
+    supabaseServer.from("products").select(cols).eq("barcode", barcode).maybeSingle()
+  );
   if (error) throw error;
   return (data as unknown as SupaProduct & Record<string, unknown>) ?? null;
 }
@@ -113,15 +112,16 @@ export async function PATCH(req: Request, ctx: Ctx) {
     const antes = await leerFila(barcode);
     if (!antes) return NextResponse.json({ error: "Producto no encontrado" }, { status: 404 });
 
-    let q = supabaseServer.from("products").update(changes).eq("barcode", barcode);
     const expected = body?.expected && typeof body.expected === "object" ? body.expected : {};
-    for (const k of Object.keys(changes)) {
-      if (!(k in expected)) continue;
-      const v = expected[k];
-      q = v === null || v === undefined ? q.is(k, null) : q.eq(k, v as string | number | boolean);
-    }
-
-    const { data, error } = await q.select(PRODUCT_COLUMNS);
+    const { data, error } = await conColumnasDeProducto((cols) => {
+      let q = supabaseServer.from("products").update(changes).eq("barcode", barcode);
+      for (const k of Object.keys(changes)) {
+        if (!(k in expected)) continue;
+        const v = expected[k];
+        q = v === null || v === undefined ? q.is(k, null) : q.eq(k, v as string | number | boolean);
+      }
+      return q.select(cols);
+    });
     if (error) throw error;
 
     if (!data || data.length === 0) {
@@ -131,6 +131,7 @@ export async function PATCH(req: Request, ctx: Ctx) {
       const nombres: Record<string, string> = {
         sale_price: "el precio",
         offer_price: "la oferta",
+        offer_ends_at: "la fecha de la oferta",
         purchase_price: "el costo",
         name: "el nombre",
       };
