@@ -1,7 +1,7 @@
 /**
  * Base en memoria con la forma del cliente de supabase-js, para testear rutas
  * sin red. Soporta lo que usan las rutas de productos: select/insert/update,
- * eq/is/in/not/or/gte, order, limit, maybeSingle y rpc.
+ * eq/is/in/not/or/gte/ilike, order, limit, maybeSingle, delete y rpc.
  */
 type Fila = Record<string, unknown>;
 type Filtro = (f: Fila) => boolean;
@@ -18,7 +18,7 @@ export function crearFakeDb(tablas: Record<string, Fila[]> = {}): FakeDb {
 
 class Consulta implements PromiseLike<{ data: unknown; error: unknown }> {
   private filtros: Filtro[] = [];
-  private op: "select" | "update" | "insert" = "select";
+  private op: "select" | "update" | "insert" | "delete" = "select";
   private valores: Fila | Fila[] | null = null;
   private unico = false;
   private limite: number | null = null;
@@ -36,6 +36,10 @@ class Consulta implements PromiseLike<{ data: unknown; error: unknown }> {
   insert(v: Fila | Fila[]) {
     this.op = "insert";
     this.valores = v;
+    return this;
+  }
+  delete() {
+    this.op = "delete";
     return this;
   }
   update(v: Fila) {
@@ -98,6 +102,10 @@ class Consulta implements PromiseLike<{ data: unknown; error: unknown }> {
       }
       this.filas().push(...nuevas);
       return { data: nuevas, error: null };
+    }
+    if (this.op === "delete") {
+      this.db.tablas[this.tabla] = this.filas().filter((f) => !coinciden.includes(f));
+      return { data: null, error: null };
     }
     if (this.op === "update") {
       for (const f of coinciden) Object.assign(f, this.valores);

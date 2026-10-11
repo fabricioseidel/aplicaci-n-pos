@@ -7,6 +7,8 @@ import { createSale, resolveSellerId, type SalePaymentInput } from "@/server/sal
 import { normalizePaymentMethod } from "@/lib/pos/payments";
 import { ofertaVigente, precioUnitario, totalEsperado, type PrecioFicha } from "@/lib/pos/precios";
 import { conColumnasDeProducto } from "@/server/productos.service";
+import { anotarMovimiento } from "@/server/cierre.service";
+import { notaFiadoDeVenta } from "@/server/anulacion.service";
 
 export const dynamic = "force-dynamic";
 
@@ -48,7 +50,16 @@ interface SaleRequestBody {
   clientSaleId?: string;
   /** Hora real de la venta en el teléfono (ISO). Sin red se sincroniza después. */
   soldAt?: string;
+  /**
+   * Venta fiada a un cliente: no entra plata ahora. La venta se registra (el
+   * stock baja) con un pago "OTHER" que no cuenta en el arqueo, y el total se
+   * carga a la cuenta del cliente. `entryId` lo genera el teléfono: si la cola
+   * reintenta, ni la venta ni el cargo se duplican.
+   */
+  fiado?: { entryId: string; accountId?: string | null; nombreNuevo?: string | null; nombre?: string | null };
 }
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** Una venta "en el futuro" o de hace más de una semana no se cree: se usa la hora del servidor. */
 const MAX_FUTURO_MS = 5 * 60 * 1000;
@@ -82,6 +93,14 @@ export async function POST(req: Request) {
     }
     if (!Number.isFinite(body.total) || body.total < 0) {
       return NextResponse.json({ error: "Total inválido" }, { status: 400 });
+    }
+    const fiado = body.fiado && !body.isStaffPurchase ? body.fiado : null;
+    if (fiado) {
+      if (!UUID_RE.test(fiado.entryId ?? "")) return NextResponse.json({ error: "Falta el id del fiado" }, { status: 400 });
+      if (!fiado.accountId && !fiado.nombreNuevo?.trim()) {
+        return NextResponse.json({ error: "Elige a quién se le fía" }, { status: 400 });
+      }
+      if (!(Math.round(body.total) > 0)) return NextResponse.json({ error: "Un fiado de $0 no se anota" }, { status: 400 });
     }
 
     // Reintento del outbox: la venta ya ocurrió en el mostrador (y el cliente
@@ -221,8 +240,9 @@ export async function POST(req: Request) {
 
     // Una compra propia "por cobrar" no recibe dinero ahora: se registra como
     // STAFF_CREDIT para que no entre al arqueo de caja.
-    const payments: SalePaymentInput[] =
-      body.payments && body.payments.length > 0
+    const payments: SalePaymentInput[] = fiado
+      ? [{ method: "OTHER", amount: body.total, reference: "FIADO" }]
+      : body.payments && body.payments.length > 0
         ? body.payments.map((p) => ({
             ...p,
             method: normalizePaymentMethod(p.method),
@@ -279,6 +299,7 @@ export async function POST(req: Request) {
       tax: body.tax ?? 0,
       notes:
         [body.notes,
+          fiado ? `Fiado: ${fiado.nombre ?? fiado.nombreNuevo ?? "cliente"}` : null,
           buyer && attendant && attendant.id !== buyer.id ? `Atendió: ${attendant.name}` : null,
           notaPrecio,
           // Precio sólo para esta venta: queda a la vista en la venta.
@@ -291,8 +312,8 @@ export async function POST(req: Request) {
           .filter(Boolean)
           .join(" · ") || null,
       soldAt: horaDeLaVenta(body.soldAt),
-      cashReceived: body.cashReceived ?? 0,
-      changeGiven: body.changeGiven ?? 0,
+      cashReceived: fiado ? 0 : body.cashReceived ?? 0,
+      changeGiven: fiado ? 0 : body.changeGiven ?? 0,
       // En una compra propia el "vendedor" es quien compra (lo que liquida
       // fin de mes); si no, quien atiende, y si no se sabe, la sesión.
       sellerName: buyer?.name ?? attendant?.name ?? sessionName,
@@ -306,6 +327,22 @@ export async function POST(req: Request) {
       payments,
       items: body.items,
     });
+
+    if (fiado) {
+      // Si esto falla la respuesta es error y la cola reintenta: apply_sale
+      // deduplica la venta por client_sale_id y el cargo usa el mismo id.
+      await anotarMovimiento({
+        id: fiado.entryId,
+        accountId: fiado.accountId ?? null,
+        nombreNuevo: fiado.accountId ? null : fiado.nombreNuevo?.trim() ?? null,
+        kind: "CHARGE",
+        amount: Math.round(body.total),
+        method: null,
+        // El prefijo "Venta #N · " es lo que usa la anulación para borrar este cargo.
+        note: `${notaFiadoDeVenta(result.id)}fiado${attendant ? ` · Anotó: ${attendant.name}` : ""}`,
+        shiftId,
+      });
+    }
 
     return NextResponse.json({ ok: true, saleId: result.id });
   } catch (e) {

@@ -65,7 +65,8 @@ function api(path, params, method, body) {
     case "/api/caja/shifts":
       return { shift: { id: "t1", status: "OPEN", branch_id: "b1", started_at: new Date().toISOString(), starting_cash: 15100, opened_by: "u1" }, branchId: "b1" };
     case "/api/caja": return { movements: [], sales: [], shift: { id: "t1", status: "OPEN" }, ventas: [], movimientos: [], resumen: {} };
-    case "/api/cuentas": return { cuentas: [], movimientos: [] };
+    case "/api/cuentas":
+      return { cuentas: [{ id: "cta1", name: "Blue", balance: 5000 }, { id: "cta2", name: "Luis", balance: 5600 }], movimientos: [] };
     case "/api/compras-propias/sin-dueno": return { compras: [] };
     case "/api/inventario/conteo":
       return { session: estado.conteoAbierto ? sesionConteo() : null };
@@ -87,7 +88,7 @@ function api(path, params, method, body) {
       const bcs = (params.get("barcodes") ?? "").split(",").filter(Boolean);
       return { verCosto: true, items: bcs.map((b) => ({ barcode: b, precio: 1000, costoNeto: 600, costoDelProveedor: false, regla: { margen: 0.35, redondeo: "decena", origen: "general" } })) };
     }
-    case "/api/sales": estado.ventas.push(body); return { ok: true, id: `v${estado.ventas.length}` };
+    case "/api/sales": estado.ventas.push(body); return { ok: true, saleId: estado.ventas.length };
     default:
       estado.desconocidas.add(`${method} ${path}`);
       return {};
@@ -210,6 +211,24 @@ await paso("Venta: corregir precio desde el carrito", async () => {
   if (Number(guardado?.sale_price) !== 1990) throw new Error("no se envió el precio a la ficha");
   await page.locator("button.h-12", { hasText: "Productos" }).first().click();
   return { enviado: { barcode: guardado.barcode, sale_price: guardado.sale_price } };
+});
+
+await paso("Venta fiada: elegir cliente y anotar", async () => {
+  const inp = page.getByPlaceholder(/Buscar o escanear/).first();
+  await inp.fill("arroz");
+  await page.getByText("Arroz grado 1", { exact: true }).first().click();
+  await inp.fill("");
+  await page.getByRole("button", { name: "Ver carrito" }).click();
+  await page.getByRole("button", { name: /Fiado \(anotar a cuenta\)/ }).click();
+  const cobrar = page.getByRole("button", { name: /Elige a quién se le fía/ });
+  if (!(await cobrar.isDisabled())) throw new Error("dejó anotar sin elegir cliente");
+  await page.getByPlaceholder("Buscar nombre…").fill("blu");
+  await page.getByRole("button", { name: /Blue/ }).first().click();
+  await page.getByRole("button", { name: /Anotar fiado/ }).click();
+  await page.getByText(/fiado a Blue/).waitFor({ timeout: 4000 });
+  const v = estado.ventas.at(-1);
+  if (!v?.fiado || v.fiado.accountId !== "cta1" || v.payments) throw new Error("payload de fiado incorrecto: " + JSON.stringify(v?.fiado));
+  return { fiado: v.fiado.nombre, total: v.total, cashReceived: v.cashReceived };
 });
 
 // Conteo
