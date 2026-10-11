@@ -26,6 +26,8 @@ import UnifiedScanner from "@/components/scanner/UnifiedScanner";
 import QuickCreateProductModal from "@/components/operaciones/QuickCreateProductModal";
 import WeightPrompt from "@/components/operaciones/WeightPrompt";
 import PriceSheet from "@/components/operaciones/PriceSheet";
+import SelectorCuenta, { type CuentaElegida } from "@/components/operaciones/cierre/SelectorCuenta";
+import type { CustomerBalance } from "@/lib/cierre/types";
 import MoneyInput from "@/components/ui/MoneyInput";
 import { CLAVE_CORREGIR } from "@/components/operaciones/caja/VentasTurno";
 import {
@@ -56,6 +58,8 @@ interface UltimaVenta {
   /** Se guardó porque la sesión venció (no por falta de red). */
   sesionVencida: boolean;
   dueno: string | null;
+  /** Venta fiada: a quién se le cargó. */
+  fiadoA?: string | null;
 }
 
 interface SaleModeProps {
@@ -97,6 +101,34 @@ export default function SaleMode({ shiftId }: SaleModeProps) {
   /** Línea a la que se le pone un precio sólo para esta venta. */
   const [especialDe, setEspecialDe] = useState<POSItem | null>(null);
   const [especialMonto, setEspecialMonto] = useState<number | null>(null);
+  /**
+   * Venta fiada a un cliente: se registra la venta (baja el stock) sin cobrar
+   * y el total se carga a su cuenta de fiado. No es lo mismo que "por cobrar"
+   * de la compra propia, que se descuenta del sueldo.
+   */
+  const [fiado, setFiado] = useState(false);
+  const [cuentaFiado, setCuentaFiado] = useState<CuentaElegida | null>(null);
+  const [cuentas, setCuentas] = useState<CustomerBalance[] | null>(null);
+  useEffect(() => {
+    if (!fiado || cuentas) return;
+    void (async () => {
+      try {
+        const res = await fetch("/api/cuentas?todas=1", { cache: "no-store" });
+        if (res.ok) setCuentas(((await res.json()) as { cuentas?: CustomerBalance[] }).cuentas ?? []);
+      } catch {
+        // Sin red no hay lista: sólo se puede fiar a una cuenta nueva por nombre.
+        setCuentas([]);
+      }
+    })();
+  }, [fiado, cuentas]);
+  const activarFiado = (v: boolean) => {
+    setFiado(v);
+    if (v) setCompraPropia(false);
+    else setCuentaFiado(null);
+  };
+  /** Sin pago ahora: compra propia por cobrar o fiado. */
+  const sinPago = porCobrar || fiado;
+
   /** Carrito recién vaciado, para "Deshacer". */
   const [vaciado, setVaciado] = useState<typeof cart | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
@@ -120,11 +152,20 @@ export default function SaleMode({ shiftId }: SaleModeProps) {
 
   // Una compra propia sin dueño no se puede liquidar a fin de mes.
   const faltaComprador = compraPropia && !comprador;
+  const faltaCuentaFiado = fiado && !cuentaFiado;
   // Una compra propia por cobrar no recibe dinero ahora: no hay pagos que cuadrar.
   const puedeCobrar =
-    cart.length > 0 && !processing && !faltaComprador && (porCobrar ? true : cobro.ok);
+    cart.length > 0 && !processing && !faltaComprador && !faltaCuentaFiado && (sinPago ? finalTotal > 0 || !fiado : cobro.ok);
   const motivoNoCobrar =
-    cart.length === 0 ? null : faltaComprador ? "Elige de quién es la compra" : porCobrar ? null : cobro.motivo;
+    cart.length === 0
+      ? null
+      : faltaComprador
+        ? "Elige de quién es la compra"
+        : faltaCuentaFiado
+          ? "Elige a quién se le fía"
+          : sinPago
+            ? null
+            : cobro.motivo;
 
   // Una venta retomada se cobra con los precios de hoy.
   useEffect(() => {
@@ -294,11 +335,15 @@ export default function SaleMode({ shiftId }: SaleModeProps) {
       showToast("Elige de quién es la compra propia", "error");
       return;
     }
-    if (!porCobrar && !cobro.ok) {
+    if (faltaCuentaFiado) {
+      showToast("Elige a quién se le fía", "error");
+      return;
+    }
+    if (!sinPago && !cobro.ok) {
       showToast(cobro.motivo ?? "Pagos inválidos", "error");
       return;
     }
-    if (!porCobrar && !efectivoConfirmado && efectivoRecibido > finalTotal + EXCESO_EFECTIVO_CONFIRMAR) {
+    if (!sinPago && !efectivoConfirmado && efectivoRecibido > finalTotal + EXCESO_EFECTIVO_CONFIRMAR) {
       setConfirmarEfectivo(true);
       return;
     }
@@ -309,7 +354,8 @@ export default function SaleMode({ shiftId }: SaleModeProps) {
       // y se reintenta, apply_sale la deduplica por client_sale_id.
       const clientSaleId = newId();
       const dueno = compraPropia && comprador ? staffDisplayName(comprador.name) : null;
-      const vuelto = porCobrar ? 0 : cobro.vuelto;
+      const vuelto = sinPago ? 0 : cobro.vuelto;
+      const fiadoA = fiado && cuentaFiado ? cuentaFiado : null;
 
       const result = await apiWrite<{ saleId?: number }>({
         kind: "sale",
@@ -324,7 +370,7 @@ export default function SaleMode({ shiftId }: SaleModeProps) {
           shiftId,
           // Hora real de la venta: sin red se sincroniza después.
           soldAt: new Date().toISOString(),
-          cashReceived: porCobrar ? 0 : efectivoRecibido,
+          cashReceived: sinPago ? 0 : efectivoRecibido,
           changeGiven: vuelto,
           tax: 0,
           discount: compraPropia ? discount : 0,
@@ -334,7 +380,18 @@ export default function SaleMode({ shiftId }: SaleModeProps) {
           staffSellerId: compraPropia ? comprador?.id : undefined,
           // Quién cobró, elegido en el teléfono: no la sesión de la mañana.
           attendantSellerId: attendant?.id,
-          ...(porCobrar ? {} : { payments: pagosParaServidor(finalTotal, filas) }),
+          ...(sinPago ? {} : { payments: pagosParaServidor(finalTotal, filas) }),
+          ...(fiadoA
+            ? {
+                fiado: {
+                  // Mismo id en cada reintento de la cola: el cargo no se duplica.
+                  entryId: crypto.randomUUID(),
+                  accountId: fiadoA.id,
+                  nombreNuevo: fiadoA.id ? null : fiadoA.name,
+                  nombre: fiadoA.name,
+                },
+              }
+            : {}),
           items: cart.map((item) => ({
             barcode: item.id,
             name: item.name,
@@ -356,7 +413,11 @@ export default function SaleMode({ shiftId }: SaleModeProps) {
           queued: result.queued,
           sesionVencida: result.queued && result.reason === "session",
           dueno: dueno && porCobrar ? dueno : null,
+          fiadoA: fiadoA?.name ?? null,
         });
+        setFiado(false);
+        setCuentaFiado(null);
+        setCuentas(null);
         resetSale();
         resetCobro();
         setSearchQuery("");
@@ -489,6 +550,7 @@ export default function SaleMode({ shiftId }: SaleModeProps) {
                 ? "✓ Venta guardada sin conexión — se sincroniza sola"
                 : `✓ Venta${ultimaVenta.id ? ` #${ultimaVenta.id}` : ""} registrada · ${clp(ultimaVenta.total)}`}
               {ultimaVenta.dueno ? ` · por cobrar a ${ultimaVenta.dueno}` : ""}
+              {ultimaVenta.fiadoA ? ` · fiado a ${ultimaVenta.fiadoA}` : ""}
             </p>
             {ultimaVenta.vuelto > 0 && (
               <p className="text-3xl font-black text-white">Vuelto {clp(ultimaVenta.vuelto)}</p>
@@ -710,7 +772,10 @@ export default function SaleMode({ shiftId }: SaleModeProps) {
             <div className="bg-white/5 rounded-2xl p-3 border border-white/5 space-y-3 mt-2">
               <button
                 type="button"
-                onClick={() => setCompraPropia(!compraPropia)}
+                onClick={() => {
+                  setCompraPropia(!compraPropia);
+                  if (!compraPropia) activarFiado(false);
+                }}
                 className={`w-full h-12 rounded-xl border px-4 text-xs font-black uppercase tracking-widest transition-colors ${
                   compraPropia
                     ? "bg-amber-500 border-amber-500 text-black"
@@ -765,7 +830,38 @@ export default function SaleMode({ shiftId }: SaleModeProps) {
                 </div>
               )}
 
-              {!porCobrar && mixto && (
+              {!compraPropia && (
+                <button
+                  type="button"
+                  onClick={() => activarFiado(!fiado)}
+                  aria-pressed={fiado}
+                  className={`w-full h-12 rounded-xl border px-4 text-xs font-black uppercase tracking-widest transition-colors ${
+                    fiado ? "bg-amber-500 border-amber-500 text-black" : "bg-white/5 border-white/10 text-white/70"
+                  }`}
+                >
+                  {fiado ? "✓ Fiado: se anota a la cuenta" : "Fiado (anotar a cuenta)"}
+                </button>
+              )}
+
+              {fiado && (
+                <div className="space-y-2">
+                  {cuentas === null ? (
+                    <p className="text-xs text-white/40">Cargando cuentas…</p>
+                  ) : (
+                    <SelectorCuenta
+                      cuentas={cuentas}
+                      valor={cuentaFiado}
+                      onChange={setCuentaFiado}
+                      etiqueta="¿A quién se le fía?"
+                    />
+                  )}
+                  <p className="text-[11px] text-amber-200/70">
+                    No entra plata a la caja: el total queda en la cuenta del cliente y se ve en Caja → Fiados.
+                  </p>
+                </div>
+              )}
+
+              {!sinPago && mixto && (
                 <div className="space-y-2">
                   <p className="text-[11px] font-black uppercase tracking-widest text-white/50">Pago mixto</p>
                   {filas.map((row, idx) => {
@@ -819,7 +915,7 @@ export default function SaleMode({ shiftId }: SaleModeProps) {
               </div>
             )}
 
-            {!porCobrar && !mixto && (
+            {!sinPago && !mixto && (
               <>
                 <div className="grid grid-cols-3 gap-1.5">
                   {(Object.keys(METHOD_SHORT) as PosPaymentMethod[]).map((m) => {
@@ -903,13 +999,13 @@ export default function SaleMode({ shiftId }: SaleModeProps) {
                 <span className="block text-[11px] font-black uppercase tracking-widest text-emerald-400">Total</span>
                 <span className="text-3xl font-black">{clp(finalTotal)}</span>
               </div>
-              {!porCobrar && cobro.vuelto > 0 && (
+              {!sinPago && cobro.vuelto > 0 && (
                 <div className="text-right">
                   <span className="block text-[11px] font-black uppercase tracking-widest text-emerald-300">Vuelto</span>
                   <span className="text-3xl font-black text-emerald-300">{clp(cobro.vuelto)}</span>
                 </div>
               )}
-              {!porCobrar && cobro.falta > 0 && (
+              {!sinPago && cobro.falta > 0 && (
                 <div className="text-right">
                   <span className="block text-[11px] font-black uppercase tracking-widest text-red-400">Falta</span>
                   <span className="text-2xl font-black text-red-400">{clp(cobro.falta)}</span>
@@ -927,7 +1023,7 @@ export default function SaleMode({ shiftId }: SaleModeProps) {
               {processing ? <ArrowPathIcon className="h-6 w-6 animate-spin" /> : motivoNoCobrar ? (
                 motivoNoCobrar
               ) : (
-                <><CheckCircleIcon className="h-6 w-6" /> {porCobrar ? "Registrar por cobrar" : `Cobrar ${clp(finalTotal)}`}</>
+                <><CheckCircleIcon className="h-6 w-6" /> {fiado ? `Anotar fiado ${clp(finalTotal)}` : porCobrar ? "Registrar por cobrar" : `Cobrar ${clp(finalTotal)}`}</>
               )}
             </button>
 

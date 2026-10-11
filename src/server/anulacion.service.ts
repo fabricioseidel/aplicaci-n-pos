@@ -91,6 +91,11 @@ export async function productosSinStock(saleId: number, branchId: string | null)
   return [...nombres];
 }
 
+/** Prefijo de la nota del cargo de fiado que deja una venta fiada. */
+export function notaFiadoDeVenta(saleId: number): string {
+  return `Venta #${saleId} · `;
+}
+
 /** true si la anuló esta llamada; false si ya estaba anulada (idempotente). */
 export async function anularVenta(id: number, motivo: string, actor: string): Promise<boolean> {
   const { error } = await supabaseServer.rpc("anular_venta", {
@@ -98,7 +103,16 @@ export async function anularVenta(id: number, motivo: string, actor: string): Pr
     p_motivo: motivo,
     p_actor: actor,
   });
-  if (!error) return true;
+  if (!error) {
+    // Una venta fiada anulada no puede seguir como deuda del cliente.
+    const { error: errFiado } = await supabaseServer
+      .from("account_entries")
+      .delete()
+      .eq("kind", "CHARGE")
+      .ilike("note", `${notaFiadoDeVenta(id)}%`);
+    if (errFiado) console.error("[anular] no se pudo borrar el fiado de la venta", id, errFiado.message);
+    return true;
+  }
   // Dos toques o dos teléfonos: la segunda llamada encuentra la venta ya
   // anulada. Para la vendedora el resultado es el mismo.
   if (/ya está anulada/i.test(error.message)) return false;
