@@ -42,7 +42,11 @@ const withSerwist = withSerwistInit({
   swSrc: "src/sw.ts",
   swDest: "public/sw.js",
   disable: process.env.NODE_ENV === "development",
-  reloadOnOnline: true,
+  // No recargar al volver la red: en la bodega el wifi va y viene, y cada
+  // reconexión recargaba la app entera (se perdía lo que se estaba escribiendo,
+  // se cerraban modales y se cortaba el envío de la cola). La reconexión ya la
+  // maneja SyncContext, que drena la cola sin recargar.
+  reloadOnOnline: false,
 });
 
 export default withSerwist(nextConfig);
