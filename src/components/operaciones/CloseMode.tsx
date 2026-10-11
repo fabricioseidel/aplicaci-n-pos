@@ -339,7 +339,7 @@ export default function CloseMode({
   const esUltimo = indice === PASOS.length - 1;
 
   return (
-    <div className="max-w-2xl mx-auto pb-28">
+    <div className="max-w-2xl mx-auto pb-safe-28">
       {/* Navegación de pasos */}
       <div className="sticky top-0 z-10 bg-[#0a0a0a] border-b border-white/5 px-1">
         <div className="flex">
@@ -448,7 +448,7 @@ export default function CloseMode({
       )}
 
       {/* Barra fija: total corriendo + avance */}
-      <div className="fixed bottom-0 inset-x-0 z-20 bg-[#0a0a0a]/95 backdrop-blur border-t border-white/10 px-4 py-3">
+      <div className="fixed bottom-0 inset-x-0 z-20 bg-[#0a0a0a]/95 backdrop-blur border-t border-white/10 px-4 pt-3 pb-safe-3">
         <div className="max-w-2xl mx-auto flex items-center gap-3">
           <div className="flex-1 min-w-0">
             <p className="text-[9px] font-black uppercase tracking-widest text-white/30">

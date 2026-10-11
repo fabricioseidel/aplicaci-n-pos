@@ -818,7 +818,7 @@ export default function FichaProducto({
       )}
 
       {/* Guardar fijo abajo */}
-      <div className="fixed bottom-0 inset-x-0 z-30 bg-[#0a0a0a]/95 backdrop-blur border-t border-white/10 p-3">
+      <div className="fixed bottom-0 inset-x-0 z-30 bg-[#0a0a0a]/95 backdrop-blur border-t border-white/10 px-3 pt-3 pb-safe-3">
         <div className="max-w-xl mx-auto flex gap-2">
           <button
             type="button"
