@@ -387,7 +387,7 @@ export default function ConteoMode() {
     let cancelado = false;
     const timer = setTimeout(async () => {
       try {
-        const res = await fetch(`/api/inventario/buscar?q=${encodeURIComponent(q)}`, {
+        const res = await fetch(`/api/inventario/buscar?q=${encodeURIComponent(q)}&inactivos=1`, {
           cache: "no-store",
         });
         if (!res.ok) return;

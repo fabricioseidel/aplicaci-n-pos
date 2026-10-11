@@ -40,8 +40,10 @@ beforeEach(() => {
       const u = String(url);
       const json = (b: unknown) => ({ ok: true, json: async () => b });
       if (u.startsWith("/api/inventario/buscar?q=")) {
-        const q = decodeURIComponent(u.split("q=")[1]).toLowerCase();
-        return json({ productos: [...inactivos, ...activos].filter((p) => q.split(" ").every((w) => p.name.toLowerCase().includes(w))) });
+        const params = new URL(u, "http://x").searchParams;
+        const q = (params.get("q") ?? "").toLowerCase();
+        const base = params.get("inactivos") === "1" ? inactivos : [...inactivos, ...activos];
+        return json({ productos: base.filter((p) => q.split(" ").every((w) => p.name.toLowerCase().includes(w))) });
       }
       if (u.startsWith("/api/inventario/conteo/producto")) return json({});
       return json({ session: sesion });
@@ -66,6 +68,14 @@ describe("ConteoMode · buscador", () => {
     expect(await screen.findByText("Harina de trigo")).toBeTruthy();
     expect(await screen.findByText("HARINA DE MAÍZ PAN BLANCA")).toBeTruthy();
     expect(screen.getByText(/fuera del catálogo/)).toBeTruthy();
+  });
+
+  it("pide al servidor sólo inactivos (los activos llenaban el límite de 25)", async () => {
+    render(<ConteoMode />);
+    await escribir("harina");
+    await screen.findByText("HARINA DE MAÍZ PAN BLANCA");
+    const urls = (fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls.map((c) => String(c[0]));
+    expect(urls.some((u) => u.startsWith("/api/inventario/buscar?q=harina&inactivos=1"))).toBe(true);
   });
 
   it("no repite como inactivo lo que ya está en el catálogo", async () => {

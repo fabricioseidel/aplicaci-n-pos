@@ -39,6 +39,14 @@ describe("GET /api/inventario/buscar", () => {
     expect((await buscar("q=pan%20harina")).productos?.map((p) => p.id)).toEqual(["111"]);
   });
 
+  it("con inactivos=1 sólo trae inactivos, aunque haya más de 25 activos que coincidan", async () => {
+    for (let i = 0; i < 30; i++) {
+      estado.db.tablas.products.push({ id: `a${i}`, barcode: `9${i}`, name: `Harina de trigo ${i}`, is_active: true });
+    }
+    const { productos } = await buscar("q=harina&inactivos=1");
+    expect(productos?.map((p) => p.id)).toEqual(["111"]);
+  });
+
   it("con menos de 2 letras no busca", async () => {
     expect((await buscar("q=h")).productos).toEqual([]);
   });
