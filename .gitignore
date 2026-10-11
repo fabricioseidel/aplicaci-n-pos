@@ -48,3 +48,7 @@ android/local.properties
 android/captures/
 android/app/src/main/assets/public/
 android/app/src/main/assets/capacitor.config.json
+
+# Salidas del recorrido E2E
+e2e/*.png
+e2e/resultados-*.json

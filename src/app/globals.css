@@ -32,3 +32,40 @@ input[type="number"] {
   -moz-appearance: textfield;
   appearance: textfield;
 }
+
+/* ── Zonas seguras (barra de estado y de navegación de Android) ───────────
+   La app nativa apunta a Android 15+ (targetSdk 36), que dibuja la web de
+   borde a borde: sin esto la hora y la batería quedan encima del chip de
+   quién atiende y los botones de abajo (Siguiente, Registrar cierre, Cobrar)
+   quedan debajo de los botones del sistema. `env()` lo da el navegador; las
+   variables `--safe-area-inset-*` las inyecta Capacitor en WebViews viejos
+   donde `env()` viene en 0. Se usa el mayor de los dos. */
+:root {
+  --sat: max(env(safe-area-inset-top, 0px), var(--safe-area-inset-top, 0px));
+  --sab: max(env(safe-area-inset-bottom, 0px), var(--safe-area-inset-bottom, 0px));
+  --sal: max(env(safe-area-inset-left, 0px), var(--safe-area-inset-left, 0px));
+  --sar: max(env(safe-area-inset-right, 0px), var(--safe-area-inset-right, 0px));
+}
+
+/* Pantalla principal: el contenido empieza bajo la barra de estado y termina
+   sobre la de navegación. */
+.app-safe {
+  padding: var(--sat) var(--sar) var(--sab) var(--sal);
+}
+
+/* Fondos de modales y hojas (`fixed inset-0`): el oscurecido sigue cubriendo
+   toda la pantalla (un borde transparente muestra el fondo del elemento),
+   pero el contenido queda dentro de la zona segura. */
+.fixed.inset-0 {
+  border-style: solid;
+  border-color: transparent;
+  border-width: var(--sat) var(--sar) var(--sab) var(--sal);
+}
+
+/* Barras fijas abajo (cierre de caja, guardar ficha). */
+.pb-safe-3 {
+  padding-bottom: calc(0.75rem + var(--sab));
+}
+.pb-safe-28 {
+  padding-bottom: calc(7rem + var(--sab));
+}

@@ -106,7 +106,7 @@ export default function OperacionesApp() {
     {/* Altura exacta de la ventana (dvh, no vh: en el navegador del celular la
         barra de direcciones se esconde y vh miente). Así el único que scrollea
         es el contenido, y la barra de pestañas no se puede ir de pantalla. */}
-    <div className="flex flex-col h-dvh bg-[#0a0a0a] text-white">
+    <div className="app-safe flex flex-col h-dvh bg-[#0a0a0a] text-white">
       <div className="sticky top-0 z-30 bg-[#0a0a0a] border-b border-white/5">
         <div className="flex justify-end gap-2 px-3 pt-2 h-7 items-center">
           <div className="mr-auto">

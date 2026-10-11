@@ -63,6 +63,14 @@ class Consulta implements PromiseLike<{ data: unknown; error: unknown }> {
     this.filtros.push((f) => String(f[k]) >= v);
     return this;
   }
+  ilike(k: string, patron: string) {
+    const re = new RegExp(
+      "^" + patron.replace(/\\([\\%_])/g, "\u0000$1").replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/%/g, ".*").replace(/\u0000(.)/g, "$1") + "$",
+      "i"
+    );
+    this.filtros.push((f) => re.test(String(f[k] ?? "")));
+    return this;
+  }
   or() {
     this.filtros.push((f) => f.is_active === null || f.is_active === undefined || f.is_active === true);
     return this;

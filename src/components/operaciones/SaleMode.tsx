@@ -32,7 +32,7 @@ import {
   MagnifyingGlassIcon, XMarkIcon, TrashIcon, MinusIcon, PlusIcon,
   BanknotesIcon, CreditCardIcon, ArrowPathIcon, CheckCircleIcon,
   ShoppingBagIcon, CameraIcon, PlusCircleIcon, ScaleIcon, CloudArrowUpIcon,
-  ArrowLeftIcon, ArrowUturnLeftIcon, ReceiptPercentIcon,
+  ArrowLeftIcon, ArrowUturnLeftIcon, ReceiptPercentIcon, PencilSquareIcon,
 } from "@heroicons/react/24/outline";
 
 const PRODUCTS_PER_PAGE = 40;
@@ -89,6 +89,8 @@ export default function SaleMode({ shiftId }: SaleModeProps) {
   const [weighing, setWeighing] = useState<{ product: ProductUI; initialKg?: number } | null>(null);
   /** Producto sin precio: se pide antes de agregarlo. */
   const [sinPrecio, setSinPrecio] = useState<ProductUI | null>(null);
+  /** Línea del carrito cuyo precio de venta está mal y se corrige en la ficha. */
+  const [corrigiendo, setCorrigiendo] = useState<POSItem | null>(null);
   /** Efectivo muy por encima del total: se pide confirmar antes de cobrar. */
   const [confirmarEfectivo, setConfirmarEfectivo] = useState(false);
   const [ultimaVenta, setUltimaVenta] = useState<UltimaVenta | null>(null);
@@ -236,7 +238,7 @@ export default function SaleMode({ shiftId }: SaleModeProps) {
   // lectura en ese momento se descarta con aviso en vez de escribirse ahí.
   useScan(
     handleCode,
-    !showScanner && !weighing && quickCreateBarcode === null && !sinPrecio && !confirmarEfectivo && !especialDe
+    !showScanner && !weighing && quickCreateBarcode === null && !sinPrecio && !corrigiendo && !confirmarEfectivo && !especialDe
   );
 
   const setFila = (idx: number, patch: Partial<FilaPago>) => {
@@ -641,16 +643,25 @@ export default function SaleMode({ shiftId }: SaleModeProps) {
                       {clp(unitPriceOf(item))} {item.byWeight ? "por kg" : "c/u"}
                     </p>
                   )}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setEspecialDe(item);
-                      setEspecialMonto(item.precioEspecial ?? null);
-                    }}
-                    className="mt-1 inline-flex items-center gap-1 h-9 px-2 -ml-2 rounded-lg text-[11px] font-black uppercase tracking-wide text-white/50"
-                  >
-                    <ReceiptPercentIcon className="h-4 w-4" /> Precio especial
-                  </button>
+                  <div className="mt-1 flex flex-wrap items-center gap-x-3 -ml-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEspecialDe(item);
+                        setEspecialMonto(item.precioEspecial ?? null);
+                      }}
+                      className="inline-flex items-center gap-1 h-9 px-2 rounded-lg text-[11px] font-black uppercase tracking-wide text-white/50"
+                    >
+                      <ReceiptPercentIcon className="h-4 w-4" /> Precio especial
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setCorrigiendo(item)}
+                      className="inline-flex items-center gap-1 h-9 px-2 rounded-lg text-[11px] font-black uppercase tracking-wide text-white/50"
+                    >
+                      <PencilSquareIcon className="h-4 w-4" /> Corregir precio
+                    </button>
+                  </div>
                 </div>
                 <button
                   onClick={() => removeFromCart(item.id)}
@@ -1065,6 +1076,23 @@ export default function SaleMode({ shiftId }: SaleModeProps) {
             upsertLocal(p);
             updateLineProduct(p);
             pickProduct(p);
+          }}
+        />
+      )}
+
+      {corrigiendo && (
+        <PriceSheet
+          modo="corregir"
+          product={corrigiendo}
+          onCancel={() => setCorrigiendo(null)}
+          onSaved={(p) => {
+            setCorrigiendo(null);
+            // Al catálogo va el producto, no la línea del carrito.
+            const enCatalogo = allProducts.find((x) => x.id === p.id);
+            const producto = enCatalogo ? { ...enCatalogo, price: p.price } : p;
+            upsertLocal(producto);
+            updateLineProduct(producto);
+            showToast(`✓ ${p.name}: precio corregido a ${clp(p.price)}`, "success");
           }}
         />
       )}

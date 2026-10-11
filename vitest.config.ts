@@ -5,6 +5,7 @@ export default defineConfig({
   resolve: {
     alias: { "@": path.resolve(__dirname, "src") },
   },
+  esbuild: { jsx: "automatic" },
   test: {
     include: ["src/**/*.test.ts", "src/**/*.test.tsx"],
     environment: "node",

@@ -15,6 +15,12 @@ interface PriceSheetProps {
   onCancel: () => void;
   /** Precio guardado en la ficha: el producto ya se puede vender. */
   onSaved: (product: ProductUI) => void;
+  /**
+   * "sin-precio" (por defecto): el producto no tiene precio y no entra al
+   * carrito hasta tenerlo. "corregir": tiene precio pero está mal; se cambia
+   * en la ficha desde el carrito, sin ir a Productos.
+   */
+  modo?: "sin-precio" | "corregir";
 }
 
 /**
@@ -22,9 +28,10 @@ interface PriceSheetProps {
  * y recién entonces entra al carrito. Antes un producto a $0 se regalaba
  * junto con el resto de la venta, o la venta fallaba con un error de SQL.
  */
-export default function PriceSheet({ product, onCancel, onSaved }: PriceSheetProps) {
+export default function PriceSheet({ product, onCancel, onSaved, modo = "sin-precio" }: PriceSheetProps) {
   const { showToast } = useToast();
-  const [price, setPrice] = useState<number | null>(null);
+  const corregir = modo === "corregir";
+  const [price, setPrice] = useState<number | null>(corregir && product.price > 0 ? product.price : null);
   const [saving, setSaving] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -34,6 +41,10 @@ export default function PriceSheet({ product, onCancel, onSaved }: PriceSheetPro
 
   const save = async () => {
     if (!price || price <= 0 || saving) return;
+    if (corregir && price === product.price) {
+      onCancel();
+      return;
+    }
     if (
       price > PRECIO_ALTO_CONFIRMAR &&
       !window.confirm(`¿Seguro que ${product.name} cuesta $${price.toLocaleString("es-CL")}?`)
@@ -43,7 +54,8 @@ export default function PriceSheet({ product, onCancel, onSaved }: PriceSheetPro
     setSaving(true);
     try {
       await saveProduct({ barcode: product.id, sale_price: price });
-      onSaved({ ...product, price, offerPrice: undefined });
+      // Corregir sólo toca el precio normal: una oferta vigente sigue igual.
+      onSaved(corregir ? { ...product, price } : { ...product, price, offerPrice: undefined });
     } catch (e) {
       showToast(e instanceof Error ? e.message : "No se pudo guardar el precio", "error");
     } finally {
@@ -59,7 +71,11 @@ export default function PriceSheet({ product, onCancel, onSaved }: PriceSheetPro
             <TagIcon className="h-6 w-6 shrink-0" />
             <div className="min-w-0">
               <h2 className="text-base font-black truncate">{product.name}</h2>
-              <p className="text-xs text-amber-200/80 font-bold">Este producto no tiene precio</p>
+              <p className="text-xs text-amber-200/80 font-bold">
+                {corregir
+                  ? `Precio actual $${product.price.toLocaleString("es-CL")}`
+                  : "Este producto no tiene precio"}
+              </p>
             </div>
           </div>
           <button type="button" onClick={onCancel} aria-label="Cerrar" className="p-2 -m-2 text-white/40">
@@ -68,7 +84,7 @@ export default function PriceSheet({ product, onCancel, onSaved }: PriceSheetPro
         </div>
 
         <label className="block text-xs font-black uppercase tracking-widest text-white/50 mb-1">
-          Precio {product.byWeight ? "por kilo" : "de venta"}
+          {corregir ? "Precio correcto" : "Precio"} {product.byWeight ? "por kilo" : "de venta"}
         </label>
         <MoneyInput
           ref={inputRef}
@@ -78,7 +94,16 @@ export default function PriceSheet({ product, onCancel, onSaved }: PriceSheetPro
           aria-label="Precio"
           className="w-full bg-black border-2 border-white/10 rounded-2xl px-4 h-16 text-3xl font-black text-white text-center outline-none focus:border-amber-500"
         />
-        <p className="mt-2 text-[11px] text-white/40">Queda guardado en la ficha para las próximas ventas.</p>
+        <p className="mt-2 text-[11px] text-white/40">
+          {corregir
+            ? "Se guarda en la ficha y se actualiza esta venta y las próximas."
+            : "Queda guardado en la ficha para las próximas ventas."}
+        </p>
+        {corregir && product.offerPrice !== undefined && (
+          <p className="mt-1 text-[11px] text-amber-300/80">
+            Tiene una oferta vigente (${product.offerPrice.toLocaleString("es-CL")}): mientras dure, se cobra la oferta.
+          </p>
+        )}
 
         <div className="flex gap-2 pt-4">
           <button
@@ -86,7 +111,7 @@ export default function PriceSheet({ product, onCancel, onSaved }: PriceSheetPro
             onClick={onCancel}
             className="flex-1 h-14 rounded-xl bg-white/5 text-white/70 text-xs font-black uppercase tracking-widest"
           >
-            No sé el precio
+            {corregir ? "Cancelar" : "No sé el precio"}
           </button>
           <button
             type="button"
@@ -95,7 +120,7 @@ export default function PriceSheet({ product, onCancel, onSaved }: PriceSheetPro
             className="flex-[1.4] h-14 rounded-xl bg-amber-500 text-black text-xs font-black uppercase tracking-widest flex items-center justify-center gap-2 disabled:opacity-30"
           >
             {saving && <ArrowPathIcon className="h-4 w-4 animate-spin" />}
-            Guardar y agregar
+            {corregir ? "Guardar precio" : "Guardar y agregar"}
           </button>
         </div>
       </div>

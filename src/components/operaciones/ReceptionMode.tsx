@@ -159,6 +159,41 @@ export default function ReceptionMode() {
     [query, allProducts]
   );
 
+  /**
+   * Los inactivos no están en el catálogo local: se preguntan a la base. Sólo
+   * inactivos, porque los activos ya salen arriba y mezclados llenaban el
+   * límite de resultados. Recibir uno lo vuelve a poner a la venta.
+   */
+  const [resultsInactivos, setResultsInactivos] = useState<ProductUI[]>([]);
+  useEffect(() => {
+    const q = query.trim();
+    if (q.length < 2) {
+      setResultsInactivos([]);
+      return;
+    }
+    let cancelado = false;
+    const timer = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/inventario/buscar?q=${encodeURIComponent(q)}&inactivos=1`, {
+          cache: "no-store",
+        });
+        if (!res.ok) return;
+        const data = (await res.json()) as { productos?: ProductUI[] };
+        if (cancelado) return;
+        const enCatalogo = new Set(allProducts.map((c) => c.id));
+        setResultsInactivos(
+          (data.productos ?? []).filter((p) => !enCatalogo.has(p.id)).slice(0, SEARCH_RESULTS_LIMIT)
+        );
+      } catch {
+        /* sin red no hay nada que sumar a lo local */
+      }
+    }, 350);
+    return () => {
+      cancelado = true;
+      clearTimeout(timer);
+    };
+  }, [query, allProducts]);
+
   const addByName = (product: ProductUI) => {
     addProduct(product, 1);
     setQuery("");
@@ -307,17 +342,35 @@ export default function ReceptionMode() {
                   </button>
                 </li>
               ))}
-              {results.length === 0 && (
-                <li className="py-3 text-center">
-                  <p className="text-xs text-white/30 mb-2">Sin coincidencias.</p>
+              {resultsInactivos.map((p) => (
+                <li key={`inactivo-${p.id}`}>
                   <button
-                    onClick={() => setCreating({ barcode: "", name: query.trim() })}
-                    className="inline-flex items-center gap-1.5 px-4 py-2 bg-emerald-500/10 border border-emerald-500/30 rounded-xl text-emerald-400 text-[10px] font-black uppercase tracking-widest"
+                    onClick={() => addByName(p)}
+                    className="w-full flex items-center gap-3 text-left bg-amber-500/5 hover:bg-amber-500/10 rounded-xl p-3 border border-amber-500/30 transition-colors"
                   >
-                    <PlusCircleIcon className="h-4 w-4" /> Crear &quot;{query.trim()}&quot;
+                    <div className="w-10 h-10 bg-white/5 rounded-xl flex items-center justify-center shrink-0 border border-white/10">
+                      <ArchiveBoxIcon className="w-5 h-5 text-amber-400/40" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-bold text-white truncate">{p.name}</p>
+                      <p className="text-[10px] text-amber-300/60 font-mono mt-0.5">
+                        {p.barcode || p.id} · fuera del catálogo · recibirlo lo reactiva
+                      </p>
+                    </div>
                   </button>
                 </li>
-              )}
+              ))}
+              <li className="py-3 text-center">
+                <p className="text-xs text-white/30 mb-2">
+                  {results.length + resultsInactivos.length > 0 ? "¿Ninguno es el que buscas?" : "Sin coincidencias."}
+                </p>
+                <button
+                  onClick={() => setCreating({ barcode: "", name: query.trim() })}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 bg-emerald-500/10 border border-emerald-500/30 rounded-xl text-emerald-400 text-[10px] font-black uppercase tracking-widest"
+                >
+                  <PlusCircleIcon className="h-4 w-4" /> Crear &quot;{query.trim()}&quot;
+                </button>
+              </li>
             </ul>
           )}
         </div>
