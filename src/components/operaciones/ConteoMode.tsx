@@ -379,7 +379,7 @@ export default function ConteoMode() {
 
   useEffect(() => {
     const q = query.trim();
-    if (q.length < 2 || resultados.length > 0) {
+    if (q.length < 2) {
       setResultadosInactivos([]);
       return;
     }
@@ -392,7 +392,12 @@ export default function ConteoMode() {
         });
         if (!res.ok) return;
         const data = (await res.json()) as { productos?: ProductUI[] };
-        if (!cancelado) setResultadosInactivos((data.productos ?? []).slice(0, SEARCH_RESULTS_LIMIT));
+        if (cancelado) return;
+        // Sólo lo que el catálogo local (activos) no trae ya.
+        const enCatalogo = new Set(catalogo.map((c) => c.id));
+        setResultadosInactivos(
+          (data.productos ?? []).filter((p) => !enCatalogo.has(p.id)).slice(0, SEARCH_RESULTS_LIMIT)
+        );
       } catch {
         /* sin red no hay nada que sumar a lo local */
       }
@@ -402,7 +407,7 @@ export default function ConteoMode() {
       cancelado = true;
       clearTimeout(timer);
     };
-  }, [query, resultados.length]);
+  }, [query, catalogo]);
 
   const fijarCantidad = (barcode: string, qty: number) => {
     setLineas((prev) =>
@@ -859,8 +864,7 @@ export default function ConteoMode() {
                 </button>
               </li>
             ))}
-            {resultados.length === 0 &&
-              resultadosInactivos.map((p) => (
+            {resultadosInactivos.map((p) => (
                 <li key={`inactivo-${p.id}`}>
                   <button
                     onClick={() => {
@@ -884,7 +888,7 @@ export default function ConteoMode() {
                 </li>
               ))}
 
-            {resultados.length === 0 && (
+            {resultados.length === 0 && resultadosInactivos.length === 0 && (
               <li className="py-3 text-center">
                 <p className="text-xs text-white/30 mb-2">
                   {resultadosInactivos.length > 0
