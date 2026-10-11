@@ -40,12 +40,18 @@ export async function GET(request: NextRequest) {
     const q = (params.get("q") ?? "").trim();
     if (q.length < 2) return NextResponse.json({ productos: [] });
 
-    // Escapar comodines para que el texto se busque literal.
-    const patron = `%${q.replace(/[\\%_]/g, "\\$&")}%`;
+    // Cada palabra se busca por separado (en cualquier orden): "harina pan"
+    // tiene que encontrar "HARINA DE MAÍZ PAN BLANCA". Comodines escapados.
+    const patrones = q
+      .split(/\s+/)
+      .filter(Boolean)
+      .map((w) => `%${w.replace(/[\\%_]/g, "\\$&")}%`);
 
-    const { data, error } = await conColumnasDeProducto((cols) =>
-      supabaseServer.from("products").select(cols).ilike("name", patron).order("name").limit(25)
-    );
+    const { data, error } = await conColumnasDeProducto((cols) => {
+      let query = supabaseServer.from("products").select(cols);
+      for (const patron of patrones) query = query.ilike("name", patron);
+      return query.order("name").limit(25);
+    });
 
     if (error) throw error;
 
