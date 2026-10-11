@@ -119,6 +119,20 @@ export function useQuickInventory(mode: QuickInventoryMode = "reception") {
       }
 
       if (!found) {
+        // El catálogo sólo trae activos. Un producto que un conteo dio por no
+        // disponible sigue existiendo: ofrecer crearlo terminaría en dos fichas
+        // con el mismo producto. Recibirlo lo reactiva.
+        try {
+          const res = await fetch(`/api/inventario/buscar?barcode=${encodeURIComponent(barcode)}`, {
+            cache: "no-store",
+          });
+          if (res.ok) found = ((await res.json()) as { producto?: ProductUI | null }).producto ?? undefined;
+        } catch {
+          /* sin red: se ofrece crearlo y el modal sugiere fusionar */
+        }
+      }
+
+      if (!found) {
         setError(`Producto no encontrado: ${barcode}`);
         return false;
       }

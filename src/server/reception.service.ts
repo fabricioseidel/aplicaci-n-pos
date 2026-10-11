@@ -56,6 +56,18 @@ export async function createReception({
   });
 
   if (error) return { ok: false, error: error.message };
+
+  // Recibir un producto que estaba fuera del catálogo (un conteo lo dio por no
+  // disponible) lo vuelve a poner a la venta: si llegó mercadería, existe. Sin
+  // esto el stock subía pero el producto seguía oculto en Venta. Si falla, la
+  // recepción ya entró igual: se puede reactivar a mano desde Productos.
+  const { error: errReactivar } = await supabaseServer
+    .from("products")
+    .update({ is_active: true })
+    .in("barcode", payload.map((i) => i.barcode))
+    .eq("is_active", false);
+  if (errReactivar) console.error("[reception] no se pudo reactivar:", errReactivar.message);
+
   return { ok: true, count: (data as number) ?? payload.length };
 }
 

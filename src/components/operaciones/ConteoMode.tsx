@@ -889,18 +889,18 @@ export default function ConteoMode() {
               ))}
 
             <li className="py-3 text-center">
-                <p className="text-xs text-white/30 mb-2">
-                  {resultados.length + resultadosInactivos.length > 0
-                    ? "¿Ninguno es el que buscas?"
-                    : "Sin coincidencias."}
-                </p>
-                <button
-                  onClick={() => setCreando({ barcode: "", name: query.trim() })}
-                  className="inline-flex items-center gap-1.5 px-4 py-2 bg-emerald-500/10 border border-emerald-500/30 rounded-xl text-emerald-400 text-[10px] font-black uppercase tracking-widest"
-                >
-                  <PlusCircleIcon className="h-4 w-4" /> Crear &quot;{query.trim()}&quot;
-                </button>
-              </li>
+              <p className="text-xs text-white/30 mb-2">
+                {resultados.length + resultadosInactivos.length > 0
+                  ? "¿Ninguno es el que buscas?"
+                  : "Sin coincidencias."}
+              </p>
+              <button
+                onClick={() => setCreando({ barcode: "", name: query.trim() })}
+                className="inline-flex items-center gap-1.5 px-4 py-2 bg-emerald-500/10 border border-emerald-500/30 rounded-xl text-emerald-400 text-[10px] font-black uppercase tracking-widest"
+              >
+                <PlusCircleIcon className="h-4 w-4" /> Crear &quot;{query.trim()}&quot;
+              </button>
+            </li>
           </ul>
         )}
       </div>

@@ -330,6 +330,13 @@ await paso("Recepción: botón Crear visible con coincidencias", async () => {
   await page.getByText(/Crear/).first().waitFor({ timeout: 2000 });
 });
 
+await paso("Recepción: código de producto INACTIVO se agrega (no ofrece crear)", async () => {
+  await buscar().fill("");
+  await manual("7790000000099");
+  await page.getByText("Galletas descontinuadas").first().waitFor({ timeout: 4000 });
+  if (await page.locator("input[value='7790000000099']").count()) throw new Error("ofreció crear un producto que ya existe");
+});
+
 // Productos
 await tab("Productos").click();
 await paso("Productos: buscar 'harina'", async () => {
