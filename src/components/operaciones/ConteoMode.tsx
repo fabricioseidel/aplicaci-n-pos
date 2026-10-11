@@ -888,10 +888,9 @@ export default function ConteoMode() {
                 </li>
               ))}
 
-            {resultados.length === 0 && resultadosInactivos.length === 0 && (
-              <li className="py-3 text-center">
+            <li className="py-3 text-center">
                 <p className="text-xs text-white/30 mb-2">
-                  {resultadosInactivos.length > 0
+                  {resultados.length + resultadosInactivos.length > 0
                     ? "¿Ninguno es el que buscas?"
                     : "Sin coincidencias."}
                 </p>
@@ -902,7 +901,6 @@ export default function ConteoMode() {
                   <PlusCircleIcon className="h-4 w-4" /> Crear &quot;{query.trim()}&quot;
                 </button>
               </li>
-            )}
           </ul>
         )}
       </div>
