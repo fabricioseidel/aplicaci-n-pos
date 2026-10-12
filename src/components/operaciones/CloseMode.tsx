@@ -4,7 +4,7 @@ import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { sumarDelDia, type MovimientoAnotado } from "@/lib/cierre/delDia";
 import {
   BanknotesIcon, ArrowPathIcon, CreditCardIcon, UserGroupIcon,
-  ClipboardDocumentCheckIcon, LockClosedIcon, PrinterIcon, CheckCircleIcon,
+  ClipboardDocumentCheckIcon, LockClosedIcon, CheckCircleIcon,
 } from "@heroicons/react/24/outline";
 import { useToast } from "@/contexts/ToastContext";
 import { useBranch } from "@/contexts/BranchContext";
@@ -12,8 +12,8 @@ import type { CashShift } from "@/server/shifts.service";
 import type { CierrePayload, CierreResumen } from "@/lib/cierre/types";
 import { clp, businessDateToday } from "@/lib/cierre/denominations";
 import { calcularPreview } from "@/lib/cierre/calc";
-import { compartirCierre } from "@/lib/print/cierrePdf";
 import { useCierreDraft } from "./cierre/useCierreDraft";
+import { useImprimirCierre, IconoImprimir } from "./cierre/useImprimirCierre";
 import PasoEfectivo from "./cierre/PasoEfectivo";
 import PasoTransferencias, { type TransferenciaPOS } from "./cierre/PasoTransferencias";
 import PasoVouchers from "./cierre/PasoVouchers";
@@ -76,6 +76,7 @@ export default function CloseMode({
   const [resultado, setResultado] = useState<CierreResumen | null>(null);
 
   const { draft, patch, clear, restored } = useCierreDraft(shift?.id ?? null);
+  const impresion = useImprimirCierre();
   /** Fiados y abonos anotados durante el día (Caja → Fiados). */
   const [delDia, setDelDia] = useState<MovimientoAnotado[] | null>(null);
 
@@ -236,21 +237,6 @@ export default function CloseMode({
     }
   };
 
-  const imprimir = async (resumen: CierreResumen) => {
-    try {
-      const via = await compartirCierre(resumen);
-      if (via === "downloaded") showToast("PDF descargado ✓", "success");
-      if (via === "sin-plugins") {
-        showToast(
-          "PDF descargado. Para abrirlo directo en la impresora hay que actualizar la app.",
-          "warning"
-        );
-      }
-    } catch {
-      showToast("No se pudo generar el PDF", "error");
-    }
-  };
-
   if (loading) {
     return (
       <div className="p-10 text-center text-white/40 text-xs font-black uppercase tracking-widest animate-pulse">
@@ -297,16 +283,28 @@ export default function CloseMode({
 
         <button
           type="button"
-          onClick={() => imprimir(resultado)}
-          className="w-full h-14 rounded-2xl bg-white text-black font-black uppercase tracking-widest text-xs flex items-center justify-center gap-2 active:bg-white/80 transition-colors"
+          onClick={() => impresion.imprimir(resultado)}
+          disabled={impresion.imprimiendo}
+          className="w-full h-14 rounded-2xl bg-white text-black font-black uppercase tracking-widest text-xs flex items-center justify-center gap-2 active:bg-white/80 transition-colors disabled:opacity-60"
         >
-          <PrinterIcon className="w-5 h-5" />
-          Imprimir / compartir
+          <IconoImprimir imprimiendo={impresion.imprimiendo} className="w-5 h-5" />
+          {impresion.conBluetooth ? "Imprimir" : "Imprimir / compartir"}
         </button>
 
-        <p className="text-center text-[11px] leading-relaxed text-white/30 px-4">
-          Se genera un PDF de 58 mm. Elige tu app de impresión en el menú de compartir de Android.
-        </p>
+        {impresion.conBluetooth ? (
+          <button
+            type="button"
+            onClick={() => impresion.compartirPdf(resultado)}
+            className="w-full min-h-12 text-[11px] font-black uppercase tracking-widest text-white/40 active:text-white/70"
+          >
+            Compartir PDF
+          </button>
+        ) : (
+          <p className="text-center text-[11px] leading-relaxed text-white/30 px-4">
+            Se genera un PDF de 58 mm. Elige tu app de impresión en el menú de compartir de Android.
+          </p>
+        )}
+        {impresion.selector}
 
         <button
           type="button"

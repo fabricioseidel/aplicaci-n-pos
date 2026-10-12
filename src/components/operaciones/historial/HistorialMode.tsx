@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useCallback, useMemo } from "react";
 import {
-  ChevronLeftIcon, ChevronRightIcon, PrinterIcon, ArrowPathIcon,
+  ChevronLeftIcon, ChevronRightIcon, ArrowPathIcon,
   ExclamationTriangleIcon, XMarkIcon,
 } from "@heroicons/react/24/outline";
 import { useToast } from "@/contexts/ToastContext";
@@ -10,9 +10,9 @@ import { useBranch } from "@/contexts/BranchContext";
 import { paymentLabel } from "@/lib/pos/payments";
 import { parseDejaParaManana, sinDejaParaManana } from "@/lib/cierre/dejaParaManana";
 import { clp } from "@/lib/cierre/denominations";
-import { compartirCierre } from "@/lib/print/cierrePdf";
 import type { CierreResumen, DeclaredTotals } from "@/lib/cierre/types";
 import { Tarjeta, FilaTotal, Vacio } from "../cierre/campos";
+import { useImprimirCierre, IconoImprimir } from "../cierre/useImprimirCierre";
 
 interface CierreFila {
   id: string;
@@ -51,6 +51,7 @@ const rangoDelMes = (anio: number, mes: number) => {
  */
 export default function HistorialMode() {
   const { showToast } = useToast();
+  const impresion = useImprimirCierre();
   const { currentBranch, branches } = useBranch();
 
   const hoy = new Date();
@@ -230,22 +231,11 @@ export default function HistorialMode() {
         <DetalleCierre
           resumen={detalle}
           onClose={() => setDetalle(null)}
-          onImprimir={async () => {
-            try {
-              const via = await compartirCierre(detalle);
-              if (via === "downloaded") showToast("PDF descargado ✓", "success");
-              if (via === "sin-plugins") {
-                showToast(
-                  "PDF descargado. Para abrirlo directo en la impresora hay que actualizar la app.",
-                  "warning"
-                );
-              }
-            } catch {
-              showToast("No se pudo generar el PDF", "error");
-            }
-          }}
+          imprimiendo={impresion.imprimiendo}
+          onImprimir={() => impresion.imprimir(detalle)}
         />
       )}
+      {impresion.selector}
     </div>
   );
 }
@@ -254,10 +244,12 @@ export default function HistorialMode() {
 function DetalleCierre({
   resumen,
   onClose,
+  imprimiendo,
   onImprimir,
 }: {
   resumen: CierreResumen;
   onClose: () => void;
+  imprimiendo: boolean;
   onImprimir: () => void;
 }) {
   const t = resumen.shift.declared_totals;
@@ -282,10 +274,11 @@ function DetalleCierre({
           <button
             type="button"
             onClick={onImprimir}
+            disabled={imprimiendo}
             aria-label="Imprimir este cierre"
-            className="h-10 px-4 rounded-xl bg-white text-black text-[10px] font-black uppercase tracking-widest flex items-center gap-1.5 active:bg-white/80"
+            className="h-10 px-4 rounded-xl bg-white text-black text-[10px] font-black uppercase tracking-widest flex items-center gap-1.5 active:bg-white/80 disabled:opacity-60"
           >
-            <PrinterIcon className="w-4 h-4" />
+            <IconoImprimir imprimiendo={imprimiendo} className="w-4 h-4" />
             Imprimir
           </button>
           <button

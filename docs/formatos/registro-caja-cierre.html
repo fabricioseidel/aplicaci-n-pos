@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cierre de caja</title>
+<!--
+  Respaldo en papel del cierre de Olivo POS: una hoja carta por día.
+  Sigue el cuaderno de siempre (tarjeta, transferencias, efectivo, total y el
+  voucher pegado) y agrega sólo lo que la app pide para cerrar: caja inicial,
+  gastos de la caja, fiados, personal por cobrar y lo que queda para mañana.
+  El PDF de al lado se regenera imprimiendo este archivo desde Chromium.
+-->
+<style>
+  @page { size: letter; margin: 11mm 12mm; }
+
+  * { box-sizing: border-box; }
+  html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+
+  body { margin: 0; background: #9a9a9a; color: #111; font: 10pt/1.25 Arial, Helvetica, sans-serif; }
+
+  .pagina {
+    width: 215.9mm; height: 279.4mm; margin: 8mm auto; padding: 11mm 12mm;
+    background: #fff; display: flex; flex-direction: column; gap: 3mm; overflow: hidden;
+  }
+  @media print {
+    body { background: #fff; }
+    .pagina { width: auto; height: 257.4mm; margin: 0; padding: 0; }
+    .no-imprimir { display: none !important; }
+  }
+
+  .encabezado { display: flex; align-items: flex-end; justify-content: space-between; border-bottom: 1.8pt solid #111; padding-bottom: 1.5mm; }
+  .encabezado h1 { margin: 0; font-size: 17pt; text-transform: uppercase; letter-spacing: .03em; }
+  .encabezado span { font-size: 8pt; color: #444; }
+
+  .datos { display: grid; grid-template-columns: 1.15fr 1fr 1fr 1fr; gap: 6mm; }
+  .campo { display: flex; align-items: flex-end; gap: 1.5mm; white-space: nowrap; }
+  .campo b { font-size: 8.5pt; text-transform: uppercase; letter-spacing: .03em; }
+  .campo .raya { flex: 1; border-bottom: .8pt solid #555; height: 6mm; min-width: 8mm; }
+  .dias { display: flex; gap: 1.2mm; font-size: 9pt; font-weight: bold; }
+  .dias i { font-style: normal; width: 5mm; height: 5mm; border: .7pt solid #777; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 7.5pt; }
+
+  .fila { display: grid; grid-template-columns: 1.45fr 1fr; gap: 4mm; align-items: stretch; }
+  .columna { display: flex; flex-direction: column; gap: 3mm; }
+
+  .seccion { border: 1pt solid #111; }
+  .seccion > h2 {
+    margin: 0; padding: 1.2mm 2mm; background: #ececec; border-bottom: 1pt solid #111;
+    font-size: 9pt; text-transform: uppercase; letter-spacing: .04em;
+    display: flex; justify-content: space-between; gap: 2mm;
+  }
+  .seccion > h2 small { font-weight: normal; text-transform: none; letter-spacing: 0; font-size: 7.6pt; color: #333; }
+
+  table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+  th, td { border: .6pt solid #666; padding: 0 1.8mm; }
+  th { height: 5mm; font-size: 7.4pt; text-transform: uppercase; letter-spacing: .03em; text-align: left; background: #f6f6f6; }
+  td { height: 6.6mm; }
+  tr > :first-child { border-left: 0; }
+  tr > :last-child { border-right: 0; }
+  thead tr:first-child th { border-top: 0; }
+  tbody:last-child tr:last-child td { border-bottom: 0; }
+  .num { text-align: right; }
+  .peso::before { content: "$"; float: left; color: #888; }
+
+  /* Ventas del día: grande, como en el cuaderno */
+  .ventas td { height: 10mm; font-size: 11pt; font-weight: bold; }
+  .ventas td small { display: block; font-weight: normal; font-size: 7.4pt; color: #444; }
+  .ventas tr.total td { height: 12.5mm; font-size: 13pt; background: #f2f2f2; border-top: 1.6pt solid #111; }
+
+  /* Cálculo del efectivo */
+  .calculo td { height: 7.4mm; }
+  .calculo td:first-child { font-size: 9pt; }
+  .calculo .op { display: inline-block; width: 4mm; font-weight: bold; font-size: 11pt; }
+  .calculo tr.res td { font-weight: bold; border-top: 1.4pt solid #111; background: #f6f6f6; }
+  .nota { font-size: 7.4pt; color: #333; padding: 1mm 2mm 1.2mm; line-height: 1.3; }
+
+  tr.total td { font-weight: bold; background: #f6f6f6; border-top: 1pt solid #111; }
+  tr.total td:first-child { text-align: right; font-size: 8pt; text-transform: uppercase; }
+
+  .voucher {
+    flex: 1; border: 1.2pt dashed #777; display: flex; align-items: center; justify-content: center;
+    text-align: center; color: #999; font-size: 9pt; font-weight: bold; text-transform: uppercase; letter-spacing: .05em; padding: 4mm;
+  }
+
+  .pie { display: grid; grid-template-columns: 1fr 1.35fr 1fr; gap: 4mm; align-items: stretch; }
+  .deja { border: 1.6pt solid #111; padding: 2mm; display: flex; flex-direction: column; justify-content: space-between; }
+  .deja b { font-size: 9pt; text-transform: uppercase; }
+  .deja small { font-size: 7.4pt; color: #444; }
+  .deja .caja { border-bottom: .8pt solid #555; height: 8mm; font-size: 12pt; color: #888; display: flex; align-items: flex-end; }
+  .obs { border: 1pt solid #111; padding: 1.2mm 2mm; }
+  .obs b { font-size: 8.5pt; text-transform: uppercase; }
+  .obs div { height: 6.6mm; border-bottom: .6pt solid #bbb; }
+  .traspaso { border: 1pt dashed #111; padding: 2mm; display: flex; flex-direction: column; justify-content: space-between; gap: 2mm; font-size: 8.5pt; }
+  .check { display: inline-block; width: 4mm; height: 4mm; border: .9pt solid #111; vertical-align: -0.8mm; margin-right: 1.2mm; }
+
+  .barra { position: sticky; top: 0; z-index: 1; display: flex; justify-content: center; gap: 3mm; padding: 3mm; background: #333; color: #fff; font-size: 10pt; }
+  .barra button { font: inherit; font-weight: bold; padding: 2mm 5mm; border: 0; border-radius: 1.5mm; cursor: pointer; }
+</style>
+</head>
+<body>
+
+<div class="barra no-imprimir">
+  <span>Hoja carta · una por día</span>
+  <button type="button" onclick="window.print()">Imprimir</button>
+</div>
+
+<section class="pagina">
+  <header class="encabezado">
+    <h1>Cierre de caja</h1>
+    <span>Olivo · respaldo de la app</span>
+  </header>
+
+  <div class="datos">
+    <div class="campo"><b>Día</b><span class="dias"><i>L</i><i>M</i><i>M</i><i>J</i><i>V</i><i>S</i><i>D</i></span></div>
+    <div class="campo"><b>Fecha</b><span class="raya"></span></div>
+    <div class="campo"><b>Cajero(a)</b><span class="raya"></span></div>
+    <div class="campo"><b>Caja inicial</b> $<span class="raya"></span></div>
+  </div>
+
+  <div class="fila">
+    <div class="columna">
+      <div class="seccion">
+        <h2>Ventas del día</h2>
+        <table class="ventas">
+          <colgroup><col><col style="width:44mm"></colgroup>
+          <tbody>
+            <tr><td>Tarjeta <small>total del voucher Getnet</small></td><td class="peso"></td></tr>
+            <tr><td>Transferencias <small>total de la lista de la derecha</small></td><td class="peso"></td></tr>
+            <tr><td>Efectivo <small>del cálculo de abajo</small></td><td class="peso"></td></tr>
+            <tr class="total"><td>Total ventas</td><td class="peso"></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="seccion">
+        <h2>Cálculo del efectivo</h2>
+        <table class="calculo">
+          <colgroup><col><col style="width:44mm"></colgroup>
+          <tbody>
+            <tr><td><span class="op"></span>Efectivo contado en la caja al cerrar</td><td class="peso"></td></tr>
+            <tr><td><span class="op">−</span>Caja inicial</td><td class="peso"></td></tr>
+            <tr><td><span class="op">+</span>Gastos pagados con plata de la caja</td><td class="peso"></td></tr>
+            <tr class="res"><td><span class="op">=</span>Ventas en efectivo</td><td class="peso"></td></tr>
+          </tbody>
+        </table>
+        <div class="nota">Si alguien pagó un fiado en efectivo, réstalo también: no es venta de hoy.</div>
+      </div>
+    </div>
+
+    <div class="seccion">
+      <h2>Transferencias <small>una por línea</small></h2>
+      <table>
+        <colgroup><col><col style="width:27mm"></colgroup>
+        <thead><tr><th>Quién</th><th class="num">Monto</th></tr></thead>
+        <tbody>
+          <tr><td></td><td class="peso"></td></tr>
+          <tr><td></td><td class="peso"></td></tr>
+          <tr><td></td><td class="peso"></td></tr>
+          <tr><td></td><td class="peso"></td></tr>
+          <tr><td></td><td class="peso"></td></tr>
+          <tr><td></td><td class="peso"></td></tr>
+          <tr><td></td><td class="peso"></td></tr>
+          <tr><td></td><td class="peso"></td></tr>
+          <tr><td></td><td class="peso"></td></tr>
+          <tr><td></td><td class="peso"></td></tr>
+          <tr><td></td><td class="peso"></td></tr>
+          <tr class="total"><td>Total</td><td class="peso"></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="fila">
+    <div class="columna">
+      <div class="seccion">
+        <h2>Gastos pagados con la caja <small>proveedor, retiro, etc.</small></h2>
+        <table>
+          <colgroup><col><col style="width:30mm"></colgroup>
+          <thead><tr><th>Motivo</th><th class="num">Monto</th></tr></thead>
+          <tbody>
+            <tr><td></td><td class="peso"></td></tr>
+            <tr><td></td><td class="peso"></td></tr>
+            <tr><td></td><td class="peso"></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="seccion">
+        <h2>Fiados <small>no son venta hasta que se pagan</small></h2>
+        <table>
+          <colgroup><col><col style="width:27mm"><col style="width:27mm"></colgroup>
+          <thead><tr><th>Nombre</th><th class="num">Se llevó</th><th class="num">Pagó</th></tr></thead>
+          <tbody>
+            <tr><td></td><td class="peso"></td><td class="peso"></td></tr>
+            <tr><td></td><td class="peso"></td><td class="peso"></td></tr>
+            <tr><td></td><td class="peso"></td><td class="peso"></td></tr>
+            <tr><td></td><td class="peso"></td><td class="peso"></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="seccion">
+        <h2>Personal por cobrar <small>se descuenta del sueldo</small></h2>
+        <table>
+          <colgroup><col><col style="width:30mm"></colgroup>
+          <thead><tr><th>Nombre</th><th class="num">Monto</th></tr></thead>
+          <tbody>
+            <tr><td></td><td class="peso"></td></tr>
+            <tr><td></td><td class="peso"></td></tr>
+            <tr><td></td><td class="peso"></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="voucher">Pegar aquí<br>el voucher de cierre<br>Getnet</div>
+  </div>
+
+  <div class="pie">
+    <div class="deja">
+      <b>Deja para mañana</b>
+      <small>Sencillo que queda en la caja</small>
+      <div class="caja">$</div>
+    </div>
+    <div class="obs">
+      <b>Observaciones</b>
+      <div></div><div></div>
+    </div>
+    <div class="traspaso">
+      <div><span class="check"></span><b>Pasado a la app</b></div>
+      <div class="campo"><b>Firma</b><span class="raya"></span></div>
+    </div>
+  </div>
+</section>
+
+</body>
+</html>

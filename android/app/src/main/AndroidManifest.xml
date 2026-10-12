@@ -44,4 +44,11 @@
          sin este permiso la pestaña de Venta no puede escanear nada. -->
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
+
+    <!-- Impresión directa en la térmica Bluetooth (ImpresoraBTPlugin). Sólo se
+         usan impresoras ya vinculadas, así que no hace falta escanear ni pedir
+         ubicación. Hasta Android 11 el permiso se otorga al instalar. -->
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-feature android:name="android.hardware.bluetooth" android:required="false" />
 </manifest>
