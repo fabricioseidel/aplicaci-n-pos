@@ -20,12 +20,26 @@ la web esté actualizada.
 Plugins agregados para el cierre:
 
 - `@capacitor/filesystem` — escribe el PDF en la caché de la app
-- `@capacitor/share` — abre el menú de compartir de Android para que lo tome
-  la app de la impresora (MPT-II por Bluetooth)
+- `@capacitor/share` — abre el menú de compartir de Android para mandar el PDF
+- `ImpresoraBT` (propio, `android/app/src/main/java/cl/olivomarket/pos/`) —
+  imprime el ticket directo en la térmica Bluetooth (MPT-II) por ESC/POS, sin
+  pasar por otra app
 
 Mientras no se reconstruya el APK, la app **no deja de funcionar**: detecta que
-los plugins no están y descarga el PDF en vez de abrir el menú de compartir,
-avisando que hay que actualizar la app.
+los plugins no están y descarga el PDF en vez de imprimir o abrir el menú de
+compartir, avisando que hay que actualizar la app.
+
+### Impresión directa en la MPT-II
+
+1. La impresora tiene que estar **vinculada** en Ajustes → Bluetooth del
+   teléfono (la app no busca aparatos, sólo usa los vinculados).
+2. La primera vez que se toca **Imprimir**, Android 12+ pide el permiso
+   "Dispositivos cercanos": hay que aceptarlo.
+3. Si hay una sola impresora vinculada, se usa sola; si hay varias, la app
+   pregunta en cuál y la recuerda.
+
+El ticket (qué dice y cómo se ve) lo arma la web en `src/lib/print/`, así que
+cambiarlo no requiere APK nuevo: sólo el plugin vive en el APK.
 
 ### Pasos para generar el APK
 
