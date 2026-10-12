@@ -1,0 +1,544 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Registro de caja</title>
+<!--
+  Respaldo en papel de Caja y Cierre de Olivo POS. Tamaño carta, dos páginas
+  (se imprime en una hoja por los dos lados). Sigue el mismo orden y las
+  mismas fórmulas que la app (src/lib/cierre/calc.ts), para que pasarlo a la
+  app después sea copiar casilla por casilla.
+  El PDF de al lado se regenera imprimiendo este archivo desde Chromium.
+-->
+<style>
+  @page { size: letter; margin: 11mm 12mm; }
+
+  :root {
+    --tinta: #111;
+    --linea: #555;
+    --suave: #bbb;
+    --fondo: #ececec;
+  }
+
+  * { box-sizing: border-box; }
+
+  html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+
+  body {
+    margin: 0;
+    background: #9a9a9a;
+    color: var(--tinta);
+    font: 9pt/1.25 Arial, Helvetica, sans-serif;
+  }
+
+  .pagina {
+    width: 215.9mm;
+    height: 279.4mm;
+    margin: 8mm auto;
+    padding: 11mm 12mm;
+    background: #fff;
+    display: flex;
+    flex-direction: column;
+    gap: 2.1mm;
+    overflow: hidden;
+  }
+
+  @media print {
+    body { background: #fff; }
+    .pagina { width: auto; height: 257.4mm; margin: 0; padding: 0; break-after: page; }
+    .pagina:last-child { break-after: auto; }
+    .no-imprimir { display: none !important; }
+  }
+
+  /* ── Encabezado ─────────────────────────────────────────── */
+  .encabezado {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    border-bottom: 1.6pt solid var(--tinta);
+    padding-bottom: 1.6mm;
+  }
+  .encabezado h1 { margin: 0; font-size: 14pt; letter-spacing: .02em; text-transform: uppercase; }
+  .encabezado .sub { font-size: 7.5pt; color: #444; margin-top: .6mm; }
+  .encabezado .hoja { font-size: 8pt; font-weight: bold; text-align: right; white-space: nowrap; }
+
+  .datos { display: grid; grid-template-columns: 1.1fr 1.6fr 1.6fr; gap: 2mm 5mm; }
+
+  .campo { display: flex; align-items: flex-end; gap: 1.5mm; white-space: nowrap; }
+  .campo b { font-size: 8pt; text-transform: uppercase; letter-spacing: .03em; }
+  .campo .raya { flex: 1; border-bottom: .7pt solid var(--linea); height: 5mm; min-width: 8mm; }
+  .campo .raya.corta { flex: 0 0 16mm; }
+
+  /* ── Secciones ──────────────────────────────────────────── */
+  .seccion { border: .9pt solid var(--tinta); }
+  .seccion > h2 {
+    margin: 0;
+    padding: 1.1mm 2mm;
+    background: var(--fondo);
+    border-bottom: .9pt solid var(--tinta);
+    font-size: 8.5pt;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+    display: flex;
+    justify-content: space-between;
+    gap: 3mm;
+  }
+  .seccion > h2 small { font-weight: normal; text-transform: none; letter-spacing: 0; font-size: 7.3pt; color: #333; }
+  .seccion .cuerpo { padding: 2mm; }
+  .seccion .nota { font-size: 7.2pt; color: #333; padding: 1mm 2mm 1.2mm; line-height: 1.3; }
+
+  .dos { display: grid; grid-template-columns: 1fr 1fr; gap: 3.2mm; align-items: start; }
+  .columna { display: flex; flex-direction: column; gap: 2.6mm; }
+
+  /* ── Tablas para escribir ───────────────────────────────── */
+  table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+  th, td { border: .6pt solid var(--linea); padding: 0 1.4mm; }
+  th {
+    height: 4.8mm;
+    font-size: 7.2pt;
+    text-transform: uppercase;
+    letter-spacing: .03em;
+    text-align: left;
+    background: #f6f6f6;
+  }
+  td { height: 6mm; }
+  tr > :first-child { border-left: 0; }
+  tr > :last-child { border-right: 0; }
+  thead tr:first-child th { border-top: 0; }
+
+  .num { text-align: right; }
+  .centro { text-align: center; }
+  .peso::before { content: "$"; float: left; color: #888; }
+  .opciones { font-size: 7pt; color: #555; text-align: center; letter-spacing: .02em; }
+
+  tr.total td { height: 7mm; font-weight: bold; background: #f6f6f6; border-top: .9pt solid var(--tinta); }
+  tr.total td:first-child, tr.total td.etq { text-align: right; font-size: 7.6pt; text-transform: uppercase; }
+
+  .letra {
+    display: inline-block;
+    min-width: 4.4mm;
+    padding: 0 .8mm;
+    border: .8pt solid var(--tinta);
+    border-radius: 1mm;
+    font-size: 7pt;
+    font-weight: bold;
+    line-height: 3.6mm;
+    text-align: center;
+    background: #fff;
+    vertical-align: middle;
+  }
+
+  /* Conteo de efectivo */
+  .conteo td:first-child { font-weight: bold; text-align: right; }
+  .conteo tr.grupo td {
+    height: 4.6mm;
+    font-size: 6.8pt;
+    text-transform: uppercase;
+    letter-spacing: .05em;
+    background: #f6f6f6;
+    font-weight: bold;
+    text-align: left;
+  }
+  .conteo .x { color: #888; text-align: center; }
+
+  /* Fórmulas del resumen */
+  .formula {
+    display: grid;
+    grid-template-columns: 25.5mm repeat(11, auto);
+    align-items: center;
+    justify-content: start;
+    gap: 1.3mm;
+    margin-bottom: 1.6mm;
+  }
+  .formula:last-child { margin-bottom: 0; }
+  .formula .nombre { font-weight: bold; font-size: 7.6pt; text-transform: uppercase; }
+  .formula .caja {
+    width: 20.5mm;
+    height: 7.4mm;
+    border: .7pt solid var(--linea);
+    position: relative;
+    font-size: 6.4pt;
+    color: #444;
+    padding: .5mm .8mm;
+    line-height: 1.05;
+  }
+  .formula .caja.resultado { border: 1.4pt solid var(--tinta); width: 25mm; }
+  .formula .op { font-weight: bold; font-size: 11pt; width: 2.6mm; text-align: center; }
+
+  .gran-total {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border: 1.8pt solid var(--tinta);
+    padding: 1.2mm 2.5mm;
+    margin-top: 1.6mm;
+  }
+  .gran-total b { font-size: 10pt; text-transform: uppercase; letter-spacing: .03em; }
+  .gran-total small { display: block; font-size: 7pt; color: #333; font-weight: normal; }
+  .gran-total .caja-total { width: 46mm; height: 8mm; border: 1pt solid var(--linea); }
+
+  .lineas { padding: 0 2mm 1mm; }
+  .lineas div { height: 6.2mm; border-bottom: .6pt solid var(--suave); }
+
+  .check { display: inline-block; width: 3.4mm; height: 3.4mm; border: .8pt solid var(--tinta); vertical-align: -0.6mm; margin-right: 1mm; }
+  .motivos { display: flex; gap: 5mm; font-size: 8pt; flex-wrap: wrap; }
+
+  .firmas { display: grid; grid-template-columns: 1fr 1fr 1.5fr; gap: 6mm; align-items: end; }
+  .firma { text-align: center; font-size: 7.4pt; }
+  .firma .raya { border-bottom: .8pt solid var(--tinta); height: 7mm; margin-bottom: 1mm; }
+  .traspaso { border: .9pt dashed var(--tinta); padding: 1.6mm 2mm; font-size: 7.8pt; display: grid; gap: 1.6mm; }
+  .traspaso .campo .raya { height: 4.4mm; }
+
+  .pie { margin-top: auto; font-size: 6.6pt; color: #555; display: flex; justify-content: space-between; border-top: .6pt solid var(--suave); padding-top: 1mm; }
+
+  .barra {
+    position: sticky; top: 0; z-index: 1;
+    display: flex; justify-content: center; gap: 3mm; padding: 3mm;
+    background: #333; color: #fff; font-size: 10pt;
+  }
+  .barra button { font: inherit; font-weight: bold; padding: 2mm 5mm; border: 0; border-radius: 1.5mm; cursor: pointer; }
+</style>
+</head>
+<body>
+
+<div class="barra no-imprimir">
+  <span>Hoja carta · 2 páginas (imprimir por ambos lados)</span>
+  <button type="button" onclick="window.print()">Imprimir</button>
+</div>
+
+<!-- ═════════════════════════ PÁGINA 1 · DURANTE EL DÍA ═════════════════════════ -->
+<section class="pagina">
+  <header class="encabezado">
+    <div>
+      <h1>Registro de caja · Durante el día</h1>
+      <div class="sub">Respaldo manual de Olivo POS. Anota aquí lo mismo que en la app (o en su lugar, si no funciona) y después pásalo tal cual.</div>
+    </div>
+    <div class="hoja">Hoja 1 de 2</div>
+  </header>
+
+  <div class="datos">
+    <div class="campo"><b>Fecha</b><span class="raya"></span></div>
+    <div class="campo"><b>Sucursal</b><span class="raya"></span></div>
+    <div class="campo"><b>Cajero(a)</b><span class="raya"></span></div>
+  </div>
+
+  <div class="motivos">
+    <b style="font-size:7.6pt;text-transform:uppercase;letter-spacing:.03em">Se usa esta hoja porque:</b>
+    <span><span class="check"></span>Respaldo de rutina</span>
+    <span><span class="check"></span>Sin internet</span>
+    <span><span class="check"></span>La app no funciona</span>
+    <span><span class="check"></span>Otro: ____________________</span>
+  </div>
+
+  <!-- 1 · Apertura -->
+  <div class="seccion">
+    <h2>1 · Apertura de caja <small>Caja → Abrir caja</small></h2>
+    <div class="cuerpo" style="display:grid;grid-template-columns:1fr 1.25fr 0.9fr;gap:5mm;align-items:end">
+      <div class="campo"><b>Hora</b><span class="raya"></span></div>
+      <div class="campo"><b>Efectivo inicial (sencillo)</b> <span class="letra">A</span> $<span class="raya"></span></div>
+      <div class="campo"><b>Firma</b><span class="raya"></span></div>
+    </div>
+    <div class="nota">El efectivo inicial suele ser lo que el cierre anterior dejó para hoy (sección 11 del día anterior). Si es más de $200.000, revisa que no sobre un cero.</div>
+  </div>
+
+  <!-- 2 · Ingresos y egresos manuales -->
+  <div class="seccion">
+    <h2>2 · Ingresos y egresos manuales <small>Caja → Ingreso / egreso manual · no son ventas</small></h2>
+    <table>
+      <colgroup>
+        <col style="width:15mm"><col style="width:23mm"><col style="width:40mm"><col><col style="width:30mm">
+      </colgroup>
+      <thead>
+        <tr><th>Hora</th><th class="centro">Tipo</th><th class="centro">Método</th><th>Motivo (ej: pago a proveedor, retiro)</th><th class="num">Monto</th></tr>
+      </thead>
+      <tbody>
+        <tr><td></td><td class="opciones">Ingreso · Egreso</td><td class="opciones">Efectivo · Tarjeta · Transf. · Otro</td><td></td><td class="peso"></td></tr>
+        <tr><td></td><td class="opciones">Ingreso · Egreso</td><td class="opciones">Efectivo · Tarjeta · Transf. · Otro</td><td></td><td class="peso"></td></tr>
+        <tr><td></td><td class="opciones">Ingreso · Egreso</td><td class="opciones">Efectivo · Tarjeta · Transf. · Otro</td><td></td><td class="peso"></td></tr>
+        <tr><td></td><td class="opciones">Ingreso · Egreso</td><td class="opciones">Efectivo · Tarjeta · Transf. · Otro</td><td></td><td class="peso"></td></tr>
+        <tr><td></td><td class="opciones">Ingreso · Egreso</td><td class="opciones">Efectivo · Tarjeta · Transf. · Otro</td><td></td><td class="peso"></td></tr>
+        <tr><td></td><td class="opciones">Ingreso · Egreso</td><td class="opciones">Efectivo · Tarjeta · Transf. · Otro</td><td></td><td class="peso"></td></tr>
+        <tr><td></td><td class="opciones">Ingreso · Egreso</td><td class="opciones">Efectivo · Tarjeta · Transf. · Otro</td><td></td><td class="peso"></td></tr>
+        <tr><td></td><td class="opciones">Ingreso · Egreso</td><td class="opciones">Efectivo · Tarjeta · Transf. · Otro</td><td></td><td class="peso"></td></tr>
+      </tbody>
+    </table>
+    <table>
+      <colgroup><col><col style="width:30mm"><col><col style="width:30mm"></colgroup>
+      <tbody>
+        <tr class="total">
+          <td>Ingresos en efectivo <span class="letra">B</span></td><td class="peso"></td>
+          <td class="etq">Egresos en efectivo <span class="letra">C</span></td><td class="peso"></td>
+        </tr>
+      </tbody>
+    </table>
+    <div class="nota">Encierra en un círculo el tipo y el método. En B y C suma <b>sólo los de efectivo</b>: los de tarjeta o transferencia no cambian la plata del cajón.</div>
+  </div>
+
+  <!-- 3 · Fiados y abonos -->
+  <div class="dos">
+    <div class="seccion">
+      <h2>3 · Fiados <small>se llevó sin pagar</small></h2>
+      <table>
+        <colgroup><col style="width:13mm"><col><col style="width:27mm"></colgroup>
+        <thead><tr><th>Hora</th><th>Nombre / qué se llevó</th><th class="num">Monto</th></tr></thead>
+        <tbody>
+          <tr><td></td><td></td><td class="peso"></td></tr>
+          <tr><td></td><td></td><td class="peso"></td></tr>
+          <tr><td></td><td></td><td class="peso"></td></tr>
+          <tr><td></td><td></td><td class="peso"></td></tr>
+          <tr><td></td><td></td><td class="peso"></td></tr>
+          <tr><td></td><td></td><td class="peso"></td></tr>
+          <tr><td></td><td></td><td class="peso"></td></tr>
+          <tr><td></td><td></td><td class="peso"></td></tr>
+          <tr class="total"><td colspan="2">Fiado entregado <span class="letra">D</span></td><td class="peso"></td></tr>
+        </tbody>
+      </table>
+      <div class="nota">No entra plata. No es venta hasta que se paga.</div>
+    </div>
+
+    <div class="seccion">
+      <h2>4 · Abonos <small>pagó una deuda anterior</small></h2>
+      <table>
+        <colgroup><col style="width:13mm"><col><col style="width:22mm"><col style="width:23mm"></colgroup>
+        <thead><tr><th>Hora</th><th>Nombre</th><th class="centro">Método</th><th class="num">Monto</th></tr></thead>
+        <tbody>
+          <tr><td></td><td></td><td class="opciones">Ef · Tr · Tj</td><td class="peso"></td></tr>
+          <tr><td></td><td></td><td class="opciones">Ef · Tr · Tj</td><td class="peso"></td></tr>
+          <tr><td></td><td></td><td class="opciones">Ef · Tr · Tj</td><td class="peso"></td></tr>
+          <tr><td></td><td></td><td class="opciones">Ef · Tr · Tj</td><td class="peso"></td></tr>
+          <tr><td></td><td></td><td class="opciones">Ef · Tr · Tj</td><td class="peso"></td></tr>
+          <tr><td></td><td></td><td class="opciones">Ef · Tr · Tj</td><td class="peso"></td></tr>
+        </tbody>
+      </table>
+      <table>
+        <colgroup><col><col style="width:23mm"></colgroup>
+        <tbody>
+          <tr class="total"><td>En efectivo <span class="letra">E</span></td><td class="peso"></td></tr>
+          <tr class="total"><td>Por transferencia <span class="letra">F</span></td><td class="peso"></td></tr>
+          <tr class="total"><td>Con tarjeta <span class="letra">G</span></td><td class="peso"></td></tr>
+        </tbody>
+      </table>
+      <div class="nota">Entra plata, pero <b>no es venta de hoy</b>.</div>
+    </div>
+  </div>
+
+  <!-- 5 · Personal y anulaciones -->
+  <div class="dos">
+    <div class="seccion">
+      <h2>5 · Compras del personal <small>por cobrar</small></h2>
+      <table>
+        <colgroup><col><col style="width:27mm"></colgroup>
+        <thead><tr><th>Quién / qué se llevó</th><th class="num">Monto</th></tr></thead>
+        <tbody>
+          <tr><td></td><td class="peso"></td></tr>
+          <tr><td></td><td class="peso"></td></tr>
+          <tr><td></td><td class="peso"></td></tr>
+          <tr><td></td><td class="peso"></td></tr>
+          <tr class="total"><td>Total por cobrar <span class="letra">H</span></td><td class="peso"></td></tr>
+        </tbody>
+      </table>
+      <div class="nota">No entra plata a la caja: se descuenta del sueldo.</div>
+    </div>
+
+    <div class="seccion">
+      <h2>6 · Ventas anuladas o corregidas</h2>
+      <table>
+        <colgroup><col style="width:18mm"><col><col style="width:23mm"></colgroup>
+        <thead><tr><th>N° venta</th><th>Motivo</th><th class="num">Monto</th></tr></thead>
+        <tbody>
+          <tr><td></td><td></td><td class="peso"></td></tr>
+          <tr><td></td><td></td><td class="peso"></td></tr>
+          <tr><td></td><td></td><td class="peso"></td></tr>
+          <tr><td></td><td></td><td class="peso"></td></tr>
+          <tr><td></td><td></td><td class="peso"></td></tr>
+        </tbody>
+      </table>
+      <div class="nota">Sólo como registro: no entran en las cuentas del cierre.</div>
+    </div>
+  </div>
+
+  <footer class="pie">
+    <span>Las letras en recuadro (A, B, C…) se usan en el resumen de la hoja 2.</span>
+    <span>Olivo POS · respaldo manual</span>
+  </footer>
+</section>
+
+<!-- ═════════════════════════ PÁGINA 2 · CIERRE ═════════════════════════ -->
+<section class="pagina">
+  <header class="encabezado">
+    <div>
+      <h1>Cierre de caja</h1>
+      <div class="sub">Mismo orden que la app: Efectivo → Transferencias → Tarjeta → Resumen. Cuenta lo que hay; no mires antes lo que dice el POS.</div>
+    </div>
+    <div class="hoja">Hoja 2 de 2</div>
+  </header>
+
+  <div class="datos">
+    <div class="campo"><b>Fecha</b><span class="raya"></span></div>
+    <div class="campo"><b>Hora de cierre</b><span class="raya"></span></div>
+    <div class="campo"><b>Cajero(a)</b><span class="raya"></span></div>
+  </div>
+
+  <div class="dos">
+    <!-- 7 · Conteo de efectivo -->
+    <div class="seccion">
+      <h2>7 · Conteo de efectivo <small>todo lo del cajón, con el sencillo</small></h2>
+      <table class="conteo">
+        <colgroup><col style="width:21mm"><col style="width:6mm"><col style="width:22mm"><col></colgroup>
+        <thead><tr><th class="num">Valor</th><th></th><th class="centro">Cantidad</th><th class="num">Subtotal</th></tr></thead>
+        <tbody>
+          <tr class="grupo"><td colspan="4">Billetes</td></tr>
+          <tr><td>$ 20.000</td><td class="x">×</td><td></td><td class="peso"></td></tr>
+          <tr><td>$ 10.000</td><td class="x">×</td><td></td><td class="peso"></td></tr>
+          <tr><td>$ 5.000</td><td class="x">×</td><td></td><td class="peso"></td></tr>
+          <tr><td>$ 2.000</td><td class="x">×</td><td></td><td class="peso"></td></tr>
+          <tr><td>$ 1.000</td><td class="x">×</td><td></td><td class="peso"></td></tr>
+          <tr class="grupo"><td colspan="4">Monedas</td></tr>
+          <tr><td>$ 500</td><td class="x">×</td><td></td><td class="peso"></td></tr>
+          <tr><td>$ 100</td><td class="x">×</td><td></td><td class="peso"></td></tr>
+          <tr><td>$ 50</td><td class="x">×</td><td></td><td class="peso"></td></tr>
+          <tr><td>$ 10</td><td class="x">×</td><td></td><td class="peso"></td></tr>
+          <tr class="total"><td colspan="3">Efectivo contado <span class="letra">I</span></td><td class="peso"></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- 8 · Transferencias -->
+    <div class="seccion">
+      <h2>8 · Transferencias <small>una por línea, con las de abonos</small></h2>
+      <table>
+        <colgroup><col style="width:7mm"><col><col style="width:27mm"></colgroup>
+        <thead><tr><th class="centro">#</th><th>Quién transfirió / N° venta</th><th class="num">Monto</th></tr></thead>
+        <tbody>
+          <tr><td class="centro">1</td><td></td><td class="peso"></td></tr>
+          <tr><td class="centro">2</td><td></td><td class="peso"></td></tr>
+          <tr><td class="centro">3</td><td></td><td class="peso"></td></tr>
+          <tr><td class="centro">4</td><td></td><td class="peso"></td></tr>
+          <tr><td class="centro">5</td><td></td><td class="peso"></td></tr>
+          <tr><td class="centro">6</td><td></td><td class="peso"></td></tr>
+          <tr><td class="centro">7</td><td></td><td class="peso"></td></tr>
+          <tr><td class="centro">8</td><td></td><td class="peso"></td></tr>
+          <tr><td class="centro">9</td><td></td><td class="peso"></td></tr>
+          <tr><td class="centro">10</td><td></td><td class="peso"></td></tr>
+          <tr class="total"><td colspan="2">Total transferencias <span class="letra">J</span></td><td class="peso"></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- 9 · Tarjeta -->
+  <div class="seccion">
+    <h2>9 · Tarjeta: cierres de la máquina <small>un voucher por línea · el total tal cual sale impreso · un 2.º cierre va en otra línea</small></h2>
+    <table>
+      <colgroup>
+        <col style="width:27mm">
+        <col style="width:11mm"><col>
+        <col style="width:11mm"><col>
+        <col style="width:11mm"><col>
+        <col style="width:31mm">
+      </colgroup>
+      <thead>
+        <tr>
+          <th rowspan="2">Terminal / hora</th>
+          <th colspan="2" class="centro">Crédito</th>
+          <th colspan="2" class="centro">Débito</th>
+          <th colspan="2" class="centro">Prepago</th>
+          <th rowspan="2" class="num">Total impreso</th>
+        </tr>
+        <tr>
+          <th class="centro">Cant.</th><th class="num">Monto</th>
+          <th class="centro">Cant.</th><th class="num">Monto</th>
+          <th class="centro">Cant.</th><th class="num">Monto</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td></td><td></td><td class="peso"></td><td></td><td class="peso"></td><td></td><td class="peso"></td><td class="peso"></td></tr>
+        <tr><td></td><td></td><td class="peso"></td><td></td><td class="peso"></td><td></td><td class="peso"></td><td class="peso"></td></tr>
+        <tr class="total"><td colspan="7">Total tarjeta <span class="letra">K</span></td><td class="peso"></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- 10 · Resumen -->
+  <div class="seccion">
+    <h2>10 · Resumen del día <small>las mismas cuentas que hace la app</small></h2>
+    <div class="cuerpo">
+      <div class="formula">
+        <span class="nombre">Efectivo</span>
+        <span class="caja">Contado <span class="letra">I</span></span><span class="op">−</span>
+        <span class="caja">Sencillo inicial <span class="letra">A</span></span><span class="op">−</span>
+        <span class="caja">Ingresos ef. <span class="letra">B</span></span><span class="op">+</span>
+        <span class="caja">Egresos ef. <span class="letra">C</span></span><span class="op">−</span>
+        <span class="caja">Abonos ef. <span class="letra">E</span></span><span class="op">=</span>
+        <span class="caja resultado"><b>Ventas efectivo ①</b></span>
+      </div>
+      <div class="formula">
+        <span class="nombre">Transferencia</span>
+        <span class="caja">Total transf. <span class="letra">J</span></span><span class="op">−</span>
+        <span class="caja">Abonos transf. <span class="letra">F</span></span><span class="op">=</span>
+        <span class="caja resultado"><b>Ventas transf. ②</b></span>
+      </div>
+      <div class="formula">
+        <span class="nombre">Tarjeta</span>
+        <span class="caja">Total tarjeta <span class="letra">K</span></span><span class="op">−</span>
+        <span class="caja">Abonos tarjeta <span class="letra">G</span></span><span class="op">=</span>
+        <span class="caja resultado"><b>Ventas tarjeta ③</b></span>
+      </div>
+
+      <div class="gran-total">
+        <b>Total ventas del día ① + ② + ③<small>El fiado (D), los abonos (E+F+G) y el personal (H) no entran en este total.</small></b>
+        <span class="caja-total"></span>
+      </div>
+    </div>
+  </div>
+
+  <div class="dos" style="grid-template-columns:1fr 1.1fr">
+    <div class="columna">
+      <!-- 11 · Deja para mañana -->
+      <div class="seccion">
+        <h2>11 · Deja para mañana <small>con eso se abre la próxima vez (A)</small></h2>
+        <div class="cuerpo">
+          <div class="campo"><b>Sencillo que queda en la caja</b> $<span class="raya"></span></div>
+        </div>
+      </div>
+
+      <div class="seccion">
+        <h2>Observaciones</h2>
+        <div class="lineas"><div></div><div></div></div>
+      </div>
+    </div>
+
+    <!-- 12 · Comparación con el POS -->
+    <div class="seccion">
+      <h2>12 · Lo que registró el POS <small>opcional, después de contar</small></h2>
+      <table>
+        <colgroup><col style="width:19mm"><col><col><col></colgroup>
+        <thead><tr><th></th><th class="num">Según POS</th><th class="num">Declarado</th><th class="num">Diferencia</th></tr></thead>
+        <tbody>
+          <tr><td><b>Efectivo</b></td><td class="peso"></td><td class="peso"></td><td class="peso"></td></tr>
+          <tr><td><b>Transfer.</b></td><td class="peso"></td><td class="peso"></td><td class="peso"></td></tr>
+          <tr><td><b>Tarjeta</b></td><td class="peso"></td><td class="peso"></td><td class="peso"></td></tr>
+        </tbody>
+      </table>
+      <div class="nota">Sólo para revisar: el cierre registra lo contado. Si una venta no pasó por el POS, la diferencia es esperable.</div>
+    </div>
+  </div>
+
+  <div class="firmas">
+    <div class="firma"><div class="raya"></div>Firma cajero(a)</div>
+    <div class="firma"><div class="raya"></div>Revisado por</div>
+    <div class="traspaso">
+      <div class="campo"><span class="check"></span><b>Pasado a la app</b>&nbsp; <b>Fecha / hora</b><span class="raya"></span></div>
+      <div class="campo"><b>Por</b><span class="raya"></span></div>
+    </div>
+  </div>
+
+  <footer class="pie">
+    <span>Guarda esta hoja aunque el cierre ya esté en la app: sirve para revisar un descuadre.</span>
+    <span>Olivo POS · respaldo manual</span>
+  </footer>
+</section>
+
+</body>
+</html>
