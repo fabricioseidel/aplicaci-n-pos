@@ -31,6 +31,10 @@ jobs:
           java-version: "21"
 
       - uses: android-actions/setup-android@v3
+        with:
+          # El paquete "tools" ya no existe en el repositorio de Google y el
+          # valor por defecto ("tools platform-tools") hace fallar el paso.
+          packages: "platform-tools"
 
       - name: Install required Android SDK packages
         run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
