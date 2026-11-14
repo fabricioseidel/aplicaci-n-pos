@@ -24,7 +24,10 @@ vi.mock("@/components/operaciones/QuickCreateReceptionModal", () => ({
 }));
 vi.mock("@/components/operaciones/inventario/CierreConteo", () => ({ default: () => null }));
 
+vi.mock("@/hooks/useAttendant", () => ({ useAttendant: () => ({ attendant: { id: "m", name: "Mariana" }, ready: true }) }));
+
 import ConteoMode from "./ConteoMode";
+import { apiWrite } from "@/lib/offline/apiWrite";
 
 const sesion = {
   sessionId: "s1", status: "OPEN", applyMode: "ON_CLOSE", openedAt: new Date().toISOString(),
@@ -103,5 +106,39 @@ describe("ConteoMode · buscador", () => {
     fireEvent.click(await screen.findByText("HARINA DE MAÍZ PAN BLANCA"));
     expect(upsertLocal).toHaveBeenCalledWith(expect.objectContaining({ id: "111" }));
     await waitFor(() => expect(screen.getByText(/Sin guardar \(1\)/i)).toBeTruthy());
+  });
+});
+
+describe("Inventario · lote", () => {
+  it("guarda el lote a nombre de quien cuenta, con el vencimiento anotado", async () => {
+    (apiWrite as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({ ok: true, data: { aplicados: 1 } });
+    render(<ConteoMode />);
+    await escribir("arroz");
+    fireEvent.click(await screen.findByText("Arroz"));
+    fireEvent.change(await screen.findByLabelText("Vencimiento de Arroz"), { target: { value: "2027-01-31" } });
+    fireEvent.click(screen.getByText("Guardar lote (1)"));
+
+    await waitFor(() => expect(apiWrite).toHaveBeenCalled());
+    const llamada = (apiWrite as unknown as { mock: { calls: Array<[{ url: string; payload: Record<string, unknown> }]> } })
+      .mock.calls[0][0];
+    expect(llamada.url).toBe("/api/inventario/conteo/items");
+    expect(llamada.payload.countedBy).toBe("Mariana");
+    expect(llamada.payload.sessionId).toBe("s1");
+    expect(llamada.payload.items).toEqual([{ barcode: "333", qty: 1, replace: false, expiry: "2027-01-31" }]);
+  });
+
+  it("muestra quién contó cuánto cuando el producto ya se contó en otro teléfono", async () => {
+    (fetch as unknown as ReturnType<typeof vi.fn>).mockImplementation(async (url: string) => {
+      const u = String(url);
+      const json = (b: unknown) => ({ ok: true, json: async () => b });
+      if (u.startsWith("/api/inventario/conteo/producto"))
+        return json({ contado: 8, porPersona: [{ por: "Alfredo", qty: 5 }, { por: "Mariana", qty: 3 }] });
+      if (u.startsWith("/api/inventario/buscar")) return json({ productos: [] });
+      return json({ session: sesion });
+    });
+    render(<ConteoMode />);
+    await escribir("arroz");
+    fireEvent.click(await screen.findByText("Arroz"));
+    expect(await screen.findByText(/Alfredo 5 \+ Mariana 3 · total 9/)).toBeTruthy();
   });
 });

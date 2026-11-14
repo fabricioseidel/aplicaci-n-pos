@@ -8,13 +8,19 @@ import {
   ClipboardDocumentCheckIcon,
   MagnifyingGlassIcon,
   MinusIcon,
+  PencilSquareIcon,
   PlusIcon,
   PlusCircleIcon,
   TrashIcon,
   XMarkIcon,
 } from "@heroicons/react/24/outline";
 import UnifiedScanner from "@/components/scanner/UnifiedScanner";
-import QuickCreateReceptionModal from "@/components/operaciones/QuickCreateReceptionModal";
+import SinCoincidencia from "@/components/operaciones/inventario/SinCoincidencia";
+import HistorialInventario from "@/components/operaciones/inventario/HistorialInventario";
+import PriceSheet from "@/components/operaciones/PriceSheet";
+import FichaProducto from "@/components/operaciones/productos/FichaProducto";
+import { useAttendant } from "@/hooks/useAttendant";
+import { fetchCategorias } from "@/services/products";
 import { useProductCatalog } from "@/hooks/useProductCatalog";
 import { useBranch } from "@/contexts/BranchContext";
 import { useSync } from "@/contexts/SyncContext";
@@ -31,6 +37,12 @@ const BORRADOR_KEY = "olivo-pos.conteo.borrador";
 const SESION_KEY = "olivo-pos.conteo.sesion";
 
 type ApplyMode = "ON_CLOSE" | "LIVE";
+/** KEEP: se mantiene el inventario actual. ZERO: parte desde 0. */
+type StartMode = "KEEP" | "ZERO";
+/** Cada cuánto se trae lo que guardaron los otros teléfonos. */
+const SONDEO_MS = 12000;
+
+const fechaCorta = (ymd: string) => ymd.split("-").reverse().join("-");
 
 interface CountProgress {
   sessionId: string;
@@ -40,6 +52,7 @@ interface CountProgress {
    * vendiendo con sus números). LIVE: cada lote fija el stock al instante.
    */
   applyMode: ApplyMode;
+  startMode?: StartMode;
   openedAt: string;
   openedBy: string | null;
   contados: number;
@@ -73,6 +86,12 @@ interface Linea {
   /** Reinicia lo contado del producto y deja sólo esta cantidad. */
   reemplazar: boolean;
   byWeight: boolean;
+  /** Precio de venta vigente, para revisarlo al contar. */
+  price?: number;
+  /** Vencimiento visto, "YYYY-MM-DD"; "" o ausente si no se anotó. */
+  expiry?: string;
+  /** Quién contó cuánto de este producto antes en la sesión. */
+  porPersona?: Array<{ por: string; qty: number }>;
 }
 
 /**
@@ -99,6 +118,9 @@ export default function ConteoMode() {
   const { products: catalogo, upsertLocal, refresh: refrescarCatalogo } = useProductCatalog();
   const { refreshPending } = useSync();
   const { showToast } = useToast();
+  /** Quién cuenta en ESTE teléfono: cada lote queda a su nombre. */
+  const { attendant } = useAttendant();
+  const quien = attendant?.name ?? authSession?.user?.name ?? null;
 
   const [progreso, setProgreso] = useState<CountProgress | null>(null);
   /**
@@ -117,12 +139,20 @@ export default function ConteoMode() {
   const [abriendo, setAbriendo] = useState(false);
   const [guardando, setGuardando] = useState(false);
   const [cerrando, setCerrando] = useState(false);
-  const [empezarEnCero, setEmpezarEnCero] = useState(false);
   /**
-   * Por defecto el conteo es independiente: anota y no toca el stock hasta
-   * cerrarse. Es lo que permite contar con la tienda abierta.
+   * Cómo empieza: manteniendo el inventario actual (sólo cambia lo escaneado)
+   * o desde 0 (lo que no se cuente queda en 0 al cerrar). En los dos casos el
+   * stock se aplica al cerrar: la tienda sigue vendiendo mientras se cuenta.
    */
-  const [modo, setModo] = useState<ApplyMode>("ON_CLOSE");
+  const [inicio, setInicio] = useState<StartMode>("KEEP");
+  /** Línea a la que se le está corrigiendo el precio. */
+  const [precioDe, setPrecioDe] = useState<Linea | null>(null);
+  /** Producto abierto en la ficha completa para editarlo. */
+  const [editando, setEditando] = useState<string | null>(null);
+  const [categorias, setCategorias] = useState<string[]>([]);
+  /** Sube cada vez que hay lotes nuevos (propios o de otro teléfono). */
+  const [novedades, setNovedades] = useState(0);
+  const marcasVistas = useRef<number | null>(null);
 
   const [lineas, setLineas] = useState<Linea[]>([]);
   const [query, setQuery] = useState("");
@@ -135,6 +165,9 @@ export default function ConteoMode() {
    * define antes de que se resuelva cuál es (y no debería depender del orden).
    */
   const sessionIdRef = useRef<string | null>(null);
+  /** Espejo de la lista sin guardar, para saber si un producto ya está en ella. */
+  const lineasRef = useRef<Linea[]>([]);
+  lineasRef.current = lineas;
 
   // ── Borrador local ────────────────────────────────────────────────
   // La lista de abajo vive en el teléfono hasta que se guarda. Si la app se
@@ -210,17 +243,6 @@ export default function ConteoMode() {
   }, [cargarProgreso]);
 
   const abrirConteo = async () => {
-    if (empezarEnCero && modo === "LIVE") {
-      const ok = window.confirm(
-        "Vas a poner TODO el stock de esta sucursal en 0 antes de empezar.\n\n" +
-          "Mientras dure el conteo la tienda web no va a poder vender nada, porque " +
-          "todo va a figurar sin existencias.\n\n" +
-          "No hace falta: al cerrar un conteo total, lo que no hayas contado queda en 0 igual.\n\n" +
-          "¿Continuar de todas formas?"
-      );
-      if (!ok) return;
-    }
-
     setAbriendo(true);
     try {
       const res = await fetch("/api/inventario/conteo", {
@@ -228,8 +250,9 @@ export default function ConteoMode() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           branchId: currentBranch?.id ?? null,
-          applyMode: modo,
-          zeroNow: modo === "LIVE" && empezarEnCero,
+          applyMode: "ON_CLOSE",
+          startMode: inicio,
+          openedBy: quien,
         }),
       });
       const data = await res.json();
@@ -245,13 +268,12 @@ export default function ConteoMode() {
       );
       showToast(
         data.yaAbierta
-          ? "Ya había un conteo abierto: seguimos con ese"
-          : data.puestosEnCero > 0
-            ? `Conteo abierto. ${data.puestosEnCero} productos quedaron en 0`
-            : "Conteo abierto",
+          ? "Ya había un inventario abierto: seguimos con ese"
+          : inicio === "ZERO"
+            ? "Modo inventario iniciado desde 0"
+            : "Modo inventario iniciado",
         "success"
       );
-      setEmpezarEnCero(false);
       void refrescarCatalogo();
     } catch (e) {
       showToast(e instanceof Error ? e.message : "No se pudo abrir el conteo", "error");
@@ -262,15 +284,16 @@ export default function ConteoMode() {
 
   // ── Armado de la lista ────────────────────────────────────────────
   const agregar = useCallback(
-    (product: ProductUI, cantidad?: number) => {
+    (product: ProductUI, cantidad?: number, vence?: string) => {
       const barcode = product.barcode || product.id;
       const paso = product.byWeight ? 0.5 : 1;
-      let esNueva = false;
+      // Se mira en el espejo y no dentro del actualizador: React puede
+      // ejecutarlo después, y entonces la consulta de abajo no salía nunca.
+      const esNueva = !lineasRef.current.some((l) => l.barcode === barcode);
 
       setLineas((prev) => {
         const idx = prev.findIndex((l) => l.barcode === barcode);
         if (idx === -1) {
-          esNueva = true;
           return [
             {
               barcode,
@@ -280,6 +303,8 @@ export default function ConteoMode() {
               yaContado: null,
               reemplazar: false,
               byWeight: Boolean(product.byWeight),
+              price: Number(product.price ?? 0),
+              expiry: vence ?? "",
             },
             ...prev,
           ];
@@ -287,7 +312,11 @@ export default function ConteoMode() {
         // Volver a escanear el mismo producto suma una unidad: así se cuenta
         // una góndola, pasando el lector por cada envase.
         const next = [...prev];
-        next[idx] = { ...next[idx], qty: next[idx].qty + (cantidad ?? paso) };
+        next[idx] = {
+          ...next[idx],
+          qty: next[idx].qty + (cantidad ?? paso),
+          ...(vence ? { expiry: vence } : {}),
+        };
         return next;
       });
 
@@ -303,11 +332,18 @@ export default function ConteoMode() {
               { cache: "no-store" }
             );
             if (!res.ok) return;
-            const data = (await res.json()) as { contado?: number };
+            const data = (await res.json()) as {
+              contado?: number;
+              porPersona?: Array<{ por: string; qty: number }>;
+            };
             const contado = Number(data.contado ?? 0);
             if (contado <= 0) return;
             setLineas((prev) =>
-              prev.map((l) => (l.barcode === barcode ? { ...l, yaContado: contado } : l))
+              prev.map((l) =>
+                l.barcode === barcode
+                  ? { ...l, yaContado: contado, porPersona: data.porPersona ?? [] }
+                  : l
+              )
             );
           } catch {
             /* sin red queda en null: sumar no necesita saber el total previo */
@@ -415,6 +451,10 @@ export default function ConteoMode() {
     );
   };
 
+  const fijarVencimiento = (barcode: string, expiry: string) => {
+    setLineas((prev) => prev.map((l) => (l.barcode === barcode ? { ...l, expiry } : l)));
+  };
+
   const quitar = (barcode: string) => {
     setLineas((prev) => prev.filter((l) => l.barcode !== barcode));
   };
@@ -430,6 +470,31 @@ export default function ConteoMode() {
   useEffect(() => {
     sessionIdRef.current = sessionIdActivo;
   }, [sessionIdActivo]);
+
+  // ── Los otros teléfonos ───────────────────────────────────────────
+  // Todos cuentan sobre la misma sesión: cada tantos segundos se trae el
+  // avance para ver lo que guardaron los demás (y si alguien la cerró).
+  useEffect(() => {
+    if (!sessionIdActivo) return;
+    const id = window.setInterval(() => {
+      if (document.visibilityState === "visible") void cargarProgreso();
+    }, SONDEO_MS);
+    return () => window.clearInterval(id);
+  }, [sessionIdActivo, cargarProgreso]);
+
+  useEffect(() => {
+    const marcas = sesionAbierta?.marcas ?? null;
+    if (marcas === null) return;
+    if (marcasVistas.current !== null && marcasVistas.current !== marcas) setNovedades((n) => n + 1);
+    marcasVistas.current = marcas;
+  }, [sesionAbierta?.marcas]);
+
+  // La ficha completa necesita las categorías; se piden una vez.
+  useEffect(() => {
+    if (editando && categorias.length === 0) {
+      void fetchCategorias().then(setCategorias).catch(() => {});
+    }
+  }, [editando, categorias.length]);
 
   // ── Guardar lo contado ────────────────────────────────────────────
   const guardar = async () => {
@@ -453,14 +518,17 @@ export default function ConteoMode() {
             barcode: l.barcode,
             qty: l.qty,
             replace: l.reemplazar,
+            ...(l.expiry ? { expiry: l.expiry } : {}),
           })),
+          // Quién cuenta en este teléfono: el lote queda a su nombre.
+          countedBy: quien,
           sessionId: sessionIdActivo,
           branchId: currentBranch?.id ?? null,
         },
       });
 
       if (res.ok && res.queued) {
-        showToast("Conteo guardado sin conexión — se sincronizará", "success");
+        showToast("Lote guardado sin conexión — se sincronizará", "success");
         setLineas([]);
         await refreshPending();
         return;
@@ -476,7 +544,7 @@ export default function ConteoMode() {
       const sumados = res.data?.sumados ?? 0;
       showToast(
         (res.data?.soloAnotado
-          ? `${cuantos} productos anotados — el stock se aplica al cerrar`
+          ? `Lote guardado: ${cuantos} productos — el stock se aplica al cerrar`
           : `${cuantos} productos contados`) +
           (sumados > 0 ? ` · ${sumados} se sumaron a lo ya contado` : "") +
           (desconocidos.length > 0 ? ` · ${desconocidos.length} sin catálogo` : ""),
@@ -524,7 +592,7 @@ export default function ConteoMode() {
       }
 
       showToast(
-        `Conteo cerrado: ${data.contados} contados` +
+        `Inventario cerrado: ${data.contados} contados` +
           (data.corregidos > 0 ? `, ${data.corregidos} corregidos por ventas` : "") +
           (modoCierre === "todo"
             ? `, ${data.puestosEnCero} puestos en 0, ${data.desactivados} fuera del catálogo`
@@ -561,14 +629,45 @@ export default function ConteoMode() {
     );
   }
 
+  // Ficha completa de un producto (editar nombre, precio, categoría…).
+  if (editando) {
+    return (
+      <FichaProducto
+        key={editando}
+        barcode={editando}
+        esAdmin={esAdmin}
+        branchId={currentBranch?.id ?? null}
+        categorias={categorias}
+        onClose={(resultado) => {
+          if (resultado) {
+            const p = resultado.producto;
+            upsertLocal(p);
+            setLineas((prev) =>
+              prev.map((l) =>
+                l.barcode === editando ? { ...l, name: p.name, price: p.price, byWeight: Boolean(p.byWeight) } : l
+              )
+            );
+          }
+          setEditando(null);
+        }}
+        onAbrirOtro={() => {}}
+        onCodigoCambiado={(nuevo, anterior) => {
+          setLineas((prev) => prev.map((l) => (l.barcode === anterior ? { ...l, barcode: nuevo } : l)));
+          void refrescarCatalogo();
+          setEditando(null);
+        }}
+      />
+    );
+  }
+
   if (!sessionIdActivo) {
     return (
       <div className="max-w-2xl mx-auto p-5 space-y-5">
         {sinConexion && (
           <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4">
             <p className="text-xs text-amber-200/80 leading-relaxed">
-              Sin conexión y sin un conteo empezado en este teléfono. El conteo se abre con red;
-              después se puede seguir escaneando sin ella.
+              Sin conexión y sin un inventario empezado en este teléfono. El modo inventario se
+              inicia con red; después se puede seguir escaneando sin ella.
             </p>
           </div>
         )}
@@ -578,7 +677,7 @@ export default function ConteoMode() {
               <ClipboardDocumentCheckIcon className="w-7 h-7" />
             </div>
             <div>
-              <h1 className="text-2xl font-black uppercase italic tracking-tight">Conteo</h1>
+              <h1 className="text-2xl font-black uppercase italic tracking-tight">Inventario</h1>
               <p className="text-sm text-white/40">
                 {currentBranch?.name ?? "Sucursal principal"}
               </p>
@@ -587,128 +686,85 @@ export default function ConteoMode() {
 
           <div className="space-y-3 text-sm text-white/60 leading-relaxed">
             <p>
-              Escanea la tienda producto por producto y escribe cuántos hay de verdad.{" "}
-              <strong className="text-white">La cantidad reemplaza el stock, no lo suma</strong> —
-              es lo que Recepción no podía hacer.
+              Al iniciar se abre <strong className="text-white">una sola sesión para todos los
+              teléfonos</strong>. Cada persona escanea, cuenta y guarda sus lotes con su nombre, y lo
+              que cuenten del mismo producto <strong className="text-white">se suma</strong>.
             </p>
             <p>
-              Sirve para <strong className="text-white">una góndola</strong> o para{" "}
-              <strong className="text-white">toda la tienda</strong>. Al cerrar eliges: aplicar solo
-              lo escaneado (lo demás no cambia) o, en un conteo total, poner en 0 lo no contado
-              (solo un administrador, confirmando cuántos productos son).
+              El stock se aplica al cerrar el inventario, descontando lo que se venda mientras
+              tanto: se puede contar con la tienda abierta.
             </p>
           </div>
 
-          {/* Cómo se aplica lo contado. Es la decisión importante del conteo y
-              se toma una sola vez, al abrirlo. */}
           <fieldset className="space-y-2">
             <legend className="text-[10px] font-black uppercase tracking-widest text-white/40 mb-1">
-              Cómo se aplica
+              Cómo empieza
             </legend>
 
             <label
               className={`flex items-start gap-3 rounded-2xl border p-3 cursor-pointer transition-colors ${
-                modo === "ON_CLOSE"
-                  ? "border-emerald-500/50 bg-emerald-500/10"
-                  : "border-white/10 bg-white/5"
+                inicio === "KEEP" ? "border-emerald-500/50 bg-emerald-500/10" : "border-white/10 bg-white/5"
               }`}
             >
               <input
                 type="radio"
-                name="modo-conteo"
-                checked={modo === "ON_CLOSE"}
-                onChange={() => setModo("ON_CLOSE")}
+                name="inicio-inventario"
+                checked={inicio === "KEEP"}
+                onChange={() => setInicio("KEEP")}
                 className="mt-0.5 w-4 h-4 accent-emerald-500"
               />
               <span className="text-xs leading-relaxed">
-                <strong className="text-white">Al cerrar el conteo</strong>{" "}
-                <span className="text-emerald-400 font-black">· recomendado</span>
+                <strong className="text-white">Mantener el inventario actual</strong>
                 <br />
                 <span className="text-white/50">
-                  No se toca nada mientras cuentas: la tienda sigue vendiendo con sus números. Al
-                  cerrar se aplica todo junto y se descuenta lo que se haya vendido después de
-                  contarlo, así las ventas del día no se pierden.
+                  Solo cambia lo que se escanee. Lo que no se cuente queda como está. Sirve para
+                  una góndola o un recuento parcial.
                 </span>
               </span>
             </label>
 
             <label
-              className={`flex items-start gap-3 rounded-2xl border p-3 cursor-pointer transition-colors ${
-                modo === "LIVE"
-                  ? "border-emerald-500/50 bg-emerald-500/10"
-                  : "border-white/10 bg-white/5"
-              }`}
+              className={`flex items-start gap-3 rounded-2xl border p-3 transition-colors ${
+                esAdmin ? "cursor-pointer" : "opacity-50"
+              } ${inicio === "ZERO" ? "border-amber-500/50 bg-amber-500/10" : "border-white/10 bg-white/5"}`}
             >
               <input
                 type="radio"
-                name="modo-conteo"
-                checked={modo === "LIVE"}
-                onChange={() => setModo("LIVE")}
-                className="mt-0.5 w-4 h-4 accent-emerald-500"
+                name="inicio-inventario"
+                checked={inicio === "ZERO"}
+                disabled={!esAdmin}
+                onChange={() => setInicio("ZERO")}
+                className="mt-0.5 w-4 h-4 accent-amber-500"
               />
               <span className="text-xs leading-relaxed">
-                <strong className="text-white">Al instante</strong>
+                <strong className="text-white">Empezar desde 0</strong>
+                {!esAdmin && <span className="text-white/50"> · solo administrador</span>}
                 <br />
                 <span className="text-white/50">
-                  Cada vez que guardas, el stock queda en lo contado. Sirve con la tienda cerrada:
-                  si alguien vende mientras cuentas, esa venta se pierde.
+                  Inventario completo de la tienda: todo parte en 0 y solo queda con stock lo que
+                  se cuente. Lo no contado pasa a 0 al cerrar, no antes, así la tienda sigue
+                  vendiendo mientras tanto.
                 </span>
               </span>
             </label>
           </fieldset>
 
-          {esAdmin && (
-            <details className="rounded-2xl border border-white/10 bg-black/20 p-3 text-xs text-white/60 leading-relaxed">
-              <summary className="cursor-pointer min-h-12 flex items-center font-black uppercase tracking-widest text-white/80">
-                Conteo total de la tienda: cómo hacerlo
-              </summary>
-              <ol className="list-decimal pl-5 space-y-1.5 mt-2">
-                <li>
-                  Empieza con <strong className="text-white">«Al cerrar el conteo»</strong>: se puede seguir
-                  vendiendo mientras cuentas.
-                </li>
-                <li>
-                  Recorre por góndola y bodega. Escanea cada envase o escribe la cantidad, y{" "}
-                  <strong className="text-white">guarda al terminar cada góndola</strong>. El mismo producto
-                  en dos lugares se suma.
-                </li>
-                <li>Varias personas pueden contar a la vez, cada una en su teléfono.</li>
-                <li>
-                  Al final, en «Cerrar conteo» → <strong className="text-white">Conteo total</strong>, revisa la
-                  lista de lo que falta: lo que veas en la tienda, escanéalo antes de cerrar.
-                </li>
-                <li>
-                  Escribe el número de productos sin contar para confirmar. Esos quedan en 0 y fuera del
-                  catálogo.
-                </li>
-              </ol>
-            </details>
-          )}
-
-          {esAdmin && modo === "LIVE" && (
-            <label className="flex items-start gap-3 rounded-2xl border border-amber-500/30 bg-amber-500/5 p-3 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={empezarEnCero}
-                onChange={(e) => setEmpezarEnCero(e.target.checked)}
-                className="mt-0.5 w-4 h-4 accent-amber-500"
-              />
-              <span className="text-xs text-amber-200/80 leading-relaxed">
-                Poner todo en 0 antes de empezar.{" "}
-                <strong>No es necesario</strong> y deja la tienda web sin stock durante todo el
-                conteo: al cerrar un conteo total, lo no contado queda en 0 igual.
-              </span>
-            </label>
-          )}
+          <p className="text-xs text-white/50">
+            Cuenta en este teléfono:{" "}
+            <strong className="text-white">{quien ?? "sin elegir"}</strong>
+            {!attendant && " — elige quién atiende arriba para que tus lotes queden a tu nombre."}
+          </p>
 
           <button
             onClick={abrirConteo}
             disabled={abriendo || sinConexion}
             className="w-full h-14 rounded-2xl bg-emerald-500 text-black text-sm font-black uppercase tracking-widest disabled:bg-white/10 disabled:text-white/40"
           >
-            {abriendo ? "Abriendo…" : "Empezar conteo"}
+            {abriendo ? "Iniciando…" : "Iniciar modo inventario"}
           </button>
         </div>
+
+        <InventariosAnteriores branchId={currentBranch?.id ?? null} />
       </div>
     );
   }
@@ -718,12 +774,14 @@ export default function ConteoMode() {
     <div className="max-w-3xl mx-auto p-4 space-y-4">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-black uppercase italic tracking-tight">Conteo</h1>
+          <h1 className="text-2xl font-black uppercase italic tracking-tight">
+            Inventario <span className="text-emerald-400 not-italic text-xs align-middle">● en curso</span>
+          </h1>
           <p className="text-[11px] text-white/40">
             {(() => {
               const abierto = sesionAbierta?.openedAt ?? sesionRecordada?.openedAt;
               const por = sesionAbierta?.openedBy ?? sesionRecordada?.openedBy;
-              return `Abierto ${abierto ? new Date(abierto).toLocaleString("es-CL") : "—"}${
+              return `Cuenta ${quien ?? "sin nombre"} · abierto ${abierto ? new Date(abierto).toLocaleString("es-CL") : "—"}${
                 por ? ` · ${por}` : ""
               }`;
             })()}
@@ -753,8 +811,11 @@ export default function ConteoMode() {
         <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
           <p className="text-xs text-white/50 leading-relaxed">
             <strong className="text-white">El stock no se toca todavía.</strong> La tienda sigue
-            vendiendo con sus números y todo se aplica al cerrar el conteo, descontando lo que se
-            venda de aquí en adelante.
+            vendiendo con sus números y todo se aplica al cerrar el inventario, descontando lo que
+            se venda de aquí en adelante.{" "}
+            {sesionAbierta.startMode === "ZERO"
+              ? "Este inventario parte desde 0: lo que no se cuente queda en 0 al cerrar."
+              : "Se mantiene el inventario actual: solo cambia lo escaneado."}
             {sesionAbierta.movidosDesdeElConteo > 0 && (
               <>
                 {" "}
@@ -926,7 +987,8 @@ export default function ConteoMode() {
         {lineas.length === 0 ? (
           <p className="text-xs text-white/30 text-center py-8 border-2 border-dashed border-white/10 rounded-3xl">
             Escanea un producto para contarlo. Cada escaneo del mismo código suma una unidad; también
-            puedes escribir la cantidad.
+            puedes escribir la cantidad, anotar el vencimiento y revisar el precio. Al terminar un
+            lote, guárdalo.
           </p>
         ) : (
           <ul className="space-y-2">
@@ -934,6 +996,7 @@ export default function ConteoMode() {
               const paso = l.byWeight ? 0.5 : 1;
               const diferencia = l.qty - l.sistema;
               const yaContado = (l.yaContado ?? 0) > 0;
+              const desdeCero = sesionAbierta?.startMode === "ZERO";
               return (
                 <li
                   key={l.barcode}
@@ -942,8 +1005,9 @@ export default function ConteoMode() {
                   <div className="flex-1 min-w-0">
                     <p className="font-black text-sm uppercase tracking-tight truncate">{l.name}</p>
                     <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest mt-0.5">
-                      {l.barcode} · sistema {l.sistema}
-                      {!yaContado && diferencia !== 0 && (
+                      {l.barcode}
+                      {!desdeCero && ` · sistema ${l.sistema}`}
+                      {!desdeCero && !yaContado && diferencia !== 0 && (
                         <span className={diferencia < 0 ? "text-red-400" : "text-emerald-400"}>
                           {" "}
                           ({diferencia > 0 ? "+" : ""}
@@ -960,7 +1024,11 @@ export default function ConteoMode() {
                         <span className="text-[10px] font-black uppercase tracking-widest text-amber-300">
                           {l.reemplazar
                             ? `Reemplaza los ${l.yaContado} ya contados`
-                            : `Ya contaste ${l.yaContado} · total ${
+                            : `${
+                                l.porPersona && l.porPersona.length > 0
+                                  ? l.porPersona.map((x) => `${x.por} ${x.qty}`).join(" + ")
+                                  : `Ya contado ${l.yaContado}`
+                              } · total ${
                                 l.byWeight
                                   ? (l.yaContado! + l.qty).toFixed(2)
                                   : l.yaContado! + l.qty
@@ -984,6 +1052,39 @@ export default function ConteoMode() {
                         </button>
                       </div>
                     )}
+
+                    {/* Lo que se revisa al contar: precio de venta y vencimiento. */}
+                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                      <button
+                        onClick={() => setPrecioDe(l)}
+                        className={`min-h-11 px-3 rounded-xl border text-xs font-black tabular-nums ${
+                          (l.price ?? 0) > 0
+                            ? "border-white/10 bg-white/5 text-white"
+                            : "border-amber-500/40 bg-amber-500/10 text-amber-300"
+                        }`}
+                      >
+                        {(l.price ?? 0) > 0
+                          ? `$${(l.price ?? 0).toLocaleString("es-CL")}${l.byWeight ? "/kg" : ""}`
+                          : "Sin precio"}
+                      </button>
+                      <label className="min-h-11 px-3 rounded-xl border border-white/10 bg-white/5 flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-white/40">
+                        Vence
+                        <input
+                          type="date"
+                          value={l.expiry ?? ""}
+                          onChange={(e) => fijarVencimiento(l.barcode, e.target.value)}
+                          aria-label={`Vencimiento de ${l.name}`}
+                          className="bg-transparent text-white text-xs font-bold outline-none [color-scheme:dark]"
+                        />
+                      </label>
+                      <button
+                        onClick={() => setEditando(l.barcode)}
+                        aria-label={`Editar ${l.name}`}
+                        className="min-h-11 min-w-11 px-3 rounded-xl border border-white/10 bg-white/5 text-white/60 flex items-center justify-center"
+                      >
+                        <PencilSquareIcon className="w-4 h-4" />
+                      </button>
+                    </div>
                   </div>
 
                   <div className="flex items-center justify-between sm:justify-end gap-2">
@@ -1035,8 +1136,12 @@ export default function ConteoMode() {
             : "bg-emerald-500 text-black active:bg-emerald-600"
         }`}
       >
-        {guardando ? "Guardando…" : `Guardar ${lineas.length} contados`}
+        {guardando ? "Guardando…" : `Guardar lote (${lineas.length})`}
       </button>
+
+      {sessionIdActivo && !sinConexion && (
+        <HistorialInventario sessionId={sessionIdActivo} refrescar={novedades} />
+      )}
 
       {/* Cierre: por defecto aplica solo lo escaneado (conteo de góndola). */}
       {sesionAbierta && (
@@ -1050,24 +1155,99 @@ export default function ConteoMode() {
       )}
 
       {creando && (
-        <QuickCreateReceptionModal
+        <SinCoincidencia
           initialBarcode={creando.barcode}
           initialName={creando.name}
           products={catalogo}
+          esAdmin={esAdmin}
           onClose={() => setCreando(null)}
-          onCreated={(product, quantity) => {
+          onListo={(product, datos) => {
             upsertLocal(product);
-            agregar(product, quantity);
+            agregar(product, datos.qty, datos.expiry);
             setCreando(null);
             setQuery("");
-          }}
-          onMerge={(product, quantity) => {
-            agregar(product, quantity);
-            setCreando(null);
-            setQuery("");
+            void refrescarCatalogo();
           }}
         />
       )}
+
+      {precioDe && (
+        <PriceSheet
+          modo={(precioDe.price ?? 0) > 0 ? "corregir" : "sin-precio"}
+          product={
+            catalogo.find((p) => (p.barcode || p.id) === precioDe.barcode) ??
+            ({ id: precioDe.barcode, barcode: precioDe.barcode, name: precioDe.name, price: precioDe.price ?? 0 } as ProductUI)
+          }
+          onCancel={() => setPrecioDe(null)}
+          onSaved={(p) => {
+            upsertLocal(p);
+            setLineas((prev) => prev.map((l) => (l.barcode === precioDe.barcode ? { ...l, price: p.price } : l)));
+            showToast(`${p.name}: $${p.price.toLocaleString("es-CL")}`, "success");
+            setPrecioDe(null);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+/**
+ * Inventarios anteriores de la sucursal, con su historial de lotes. Nada se
+ * borra al cerrar: cada inventario queda consultable.
+ */
+function InventariosAnteriores({ branchId }: { branchId: string | null }) {
+  const [sesiones, setSesiones] = useState<
+    Array<{ sessionId: string; status: string; openedAt: string; openedBy: string | null; closedAt: string | null }>
+  >([]);
+  const [ver, setVer] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelado = false;
+    void (async () => {
+      try {
+        const res = await fetch(
+          `/api/inventario/conteo/historial${branchId ? `?branchId=${encodeURIComponent(branchId)}` : ""}`,
+          { cache: "no-store" }
+        );
+        if (!res.ok) return;
+        const data = (await res.json()) as { sesiones?: typeof sesiones };
+        if (!cancelado) setSesiones((data.sesiones ?? []).filter((x) => x.status === "CLOSED"));
+      } catch {
+        /* sin red no hay historial que mostrar */
+      }
+    })();
+    return () => {
+      cancelado = true;
+    };
+  }, [branchId]);
+
+  if (sesiones.length === 0) return null;
+
+  return (
+    <div className="space-y-2">
+      <p className="text-[10px] font-black uppercase tracking-[0.3em] text-white/30 italic px-1">
+        Inventarios anteriores
+      </p>
+      <ul className="space-y-2">
+        {sesiones.map((x) => (
+          <li key={x.sessionId} className="space-y-2">
+            <button
+              onClick={() => setVer(ver === x.sessionId ? null : x.sessionId)}
+              aria-expanded={ver === x.sessionId}
+              className="w-full min-h-12 px-4 py-2 rounded-2xl border border-white/10 bg-white/5 text-left"
+            >
+              <span className="block text-xs font-black text-white">
+                {fechaCorta(x.openedAt.slice(0, 10))}
+                {x.openedBy ? ` · ${x.openedBy}` : ""}
+              </span>
+              <span className="block text-[10px] text-white/40">
+                Cerrado {x.closedAt ? new Date(x.closedAt).toLocaleString("es-CL") : "—"}
+              </span>
+            </button>
+            {ver === x.sessionId && <HistorialInventario sessionId={x.sessionId} abiertoAlInicio />}
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }

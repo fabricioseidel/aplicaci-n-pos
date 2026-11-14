@@ -34,8 +34,17 @@ import { supabaseServer } from "@/lib/supabase-server";
 /** Cómo se aplica lo contado. Ver el comentario de arriba. */
 export type CountApplyMode = "ON_CLOSE" | "LIVE";
 
+/**
+ * Cómo empieza el inventario. `KEEP`: se mantiene el stock actual y sólo
+ * cambia lo escaneado. `ZERO`: parte desde 0, lo que no se cuente queda en 0
+ * al cerrar. No toca el stock al abrir: es la regla con la que se cierra.
+ */
+export type CountStartMode = "KEEP" | "ZERO";
+
 export interface CountItem {
   barcode: string;
+  /** Vencimiento visto en este lugar, "YYYY-MM-DD". Opcional. */
+  expiry?: string | null;
   /**
    * Cantidad vista en ESTE lugar. 0 es válido y significa "acá no hay".
    * Se suma a lo que ya se haya contado del producto en la sesión.
@@ -53,6 +62,7 @@ export interface CountProgress {
   sessionId: string;
   status: "OPEN" | "CLOSED";
   applyMode: CountApplyMode;
+  startMode: CountStartMode;
   branchId: string;
   openedAt: string;
   openedBy: string | null;
@@ -83,13 +93,22 @@ export interface CountProgress {
 
 type Fallo = { ok: false; error: string };
 
+/** "YYYY-MM-DD" de una fecha que existe. */
+export function esFecha(v: unknown): v is string {
+  if (typeof v !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(v)) return false;
+  const d = new Date(`${v}T00:00:00Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === v;
+}
+
 /** Abre el conteo de la sucursal, o devuelve el que ya estaba abierto. */
 export async function openCount({
   branchId,
   openedBy,
   zeroNow = false,
   applyMode = "ON_CLOSE",
+  startMode = "KEEP",
 }: {
+  startMode?: CountStartMode;
   branchId?: string | null;
   openedBy?: string | null;
   zeroNow?: boolean;
@@ -116,6 +135,16 @@ export async function openCount({
   const res = (data ?? {}) as Record<string, unknown>;
   if (res.ok !== true) {
     return { ok: false, error: String(res.error ?? "No se pudo abrir el conteo") };
+  }
+
+  // La regla de inicio sólo la fija quien abre: si ya había un inventario
+  // abierto, manda la que eligió esa persona.
+  if (!res.yaAbierta && startMode === "ZERO") {
+    const { error: errModo } = await supabaseServer
+      .from("stock_count_sessions")
+      .update({ start_mode: "ZERO" })
+      .eq("id", String(res.sessionId));
+    if (errModo) return { ok: false, error: errModo.message };
   }
 
   return {
@@ -168,7 +197,17 @@ export async function countProgress(
     return { ok: false, error: String(res.error ?? "No se pudo leer el conteo") };
   }
 
-  return { ok: true, progress: res as unknown as CountProgress };
+  // `start_mode` vive en la sesión y no en el RPC de avance. Si la columna
+  // todavía no existe en la base, se asume KEEP (el comportamiento de antes).
+  const { data: fila } = await supabaseServer
+    .from("stock_count_sessions")
+    .select("start_mode")
+    .eq("id", sessionId)
+    .maybeSingle();
+  const startMode: CountStartMode =
+    (fila as { start_mode?: string } | null)?.start_mode === "ZERO" ? "ZERO" : "KEEP";
+
+  return { ok: true, progress: { ...(res as unknown as CountProgress), startMode } };
 }
 
 /**
@@ -231,6 +270,20 @@ export async function applyCount({
     return { ok: false, error: String(res.error ?? "No se pudo registrar el conteo") };
   }
 
+  // Precio vigente y vencimiento de cada marca del lote. Va aparte del RPC de
+  // conteo y es idempotente: si falla, lo contado ya quedó guardado igual.
+  if (sessionId && opId) {
+    const anotaciones = (items ?? [])
+      .filter((i) => i?.barcode && esFecha(i.expiry))
+      .map((i) => ({ barcode: String(i.barcode), expiry: String(i.expiry) }));
+    const { error: errAnota } = await supabaseServer.rpc("stock_count_annotate", {
+      p_session_id: sessionId,
+      p_op_id: opId,
+      p_items: anotaciones,
+    });
+    if (errAnota) console.error("[inventario] stock_count_annotate:", errAnota.message);
+  }
+
   return {
     ok: true,
     aplicados: Number(res.aplicados ?? 0),
@@ -255,7 +308,17 @@ export async function countedProduct({
 }: {
   sessionId: string;
   barcode: string;
-}): Promise<{ ok: true; contado: number; marcas: number } | Fallo> {
+}): Promise<
+  | {
+      ok: true;
+      contado: number;
+      marcas: number;
+      /** Quién contó cuánto: "Mariana 3 · Alfredo 5 · Fabricio 2". */
+      porPersona: Array<{ por: string; qty: number }>;
+      vencimiento: string | null;
+    }
+  | Fallo
+> {
   const { data, error } = await supabaseServer.rpc("stock_count_product", {
     p_session_id: sessionId,
     p_barcode: barcode,
@@ -268,6 +331,100 @@ export async function countedProduct({
     ok: true,
     contado: Number(res.contado ?? 0),
     marcas: Number(res.marcas ?? 0),
+    porPersona: Array.isArray(res.porPersona)
+      ? (res.porPersona as Array<{ por?: unknown; qty?: unknown }>).map((x) => ({
+          por: String(x.por ?? "Sin nombre"),
+          qty: Number(x.qty ?? 0),
+        }))
+      : [],
+    vencimiento: typeof res.vencimiento === "string" ? res.vencimiento : null,
+  };
+}
+
+export interface LoteHistorial {
+  lote: string;
+  por: string;
+  guardado: string;
+  productos: number;
+  unidades: number;
+  items: Array<{
+    barcode: string;
+    name: string;
+    qty: number;
+    expiry: string | null;
+    price: number | null;
+  }>;
+}
+
+export interface HistorialConteo {
+  totalLotes: number;
+  lotes: LoteHistorial[];
+  porPersona: Array<{ por: string; lotes: number; productos: number; unidades: number; ultimo: string }>;
+  /** Marcas borradas al corregir un producto (quedan guardadas aparte). */
+  anuladas: number;
+}
+
+/**
+ * Historial de un inventario: cada lote guardado es una subida (quién, cuándo,
+ * qué productos) y el total por persona. Sirve para sesiones abiertas y cerradas.
+ */
+export async function countHistory(
+  sessionId: string,
+  limite = 100
+): Promise<{ ok: true; historial: HistorialConteo } | Fallo> {
+  const { data, error } = await supabaseServer.rpc("stock_count_history", {
+    p_session_id: sessionId,
+    p_limit: limite,
+  });
+  if (error) return { ok: false, error: error.message };
+
+  const res = (data ?? {}) as Record<string, unknown>;
+  return {
+    ok: true,
+    historial: {
+      totalLotes: Number(res.totalLotes ?? 0),
+      lotes: Array.isArray(res.lotes) ? (res.lotes as LoteHistorial[]) : [],
+      porPersona: Array.isArray(res.porPersona)
+        ? (res.porPersona as HistorialConteo["porPersona"])
+        : [],
+      anuladas: Number(res.anuladas ?? 0),
+    },
+  };
+}
+
+export interface SesionResumen {
+  sessionId: string;
+  status: "OPEN" | "CLOSED";
+  openedAt: string;
+  openedBy: string | null;
+  closedAt: string | null;
+  closedBy: string | null;
+}
+
+/** Últimos inventarios de la sucursal, del más nuevo al más viejo. */
+export async function recentSessions(
+  branchId?: string | null,
+  limite = 8
+): Promise<{ ok: true; sesiones: SesionResumen[] } | Fallo> {
+  let query = supabaseServer
+    .from("stock_count_sessions")
+    .select("id, status, opened_at, opened_by, closed_at, closed_by")
+    .order("opened_at", { ascending: false })
+    .limit(limite);
+  if (branchId) query = query.eq("branch_id", branchId);
+
+  const { data, error } = await query;
+  if (error) return { ok: false, error: error.message };
+  return {
+    ok: true,
+    sesiones: ((data ?? []) as Array<Record<string, unknown>>).map((r) => ({
+      sessionId: String(r.id),
+      status: r.status === "OPEN" ? "OPEN" : "CLOSED",
+      openedAt: String(r.opened_at),
+      openedBy: (r.opened_by as string | null) ?? null,
+      closedAt: (r.closed_at as string | null) ?? null,
+      closedBy: (r.closed_by as string | null) ?? null,
+    })),
   };
 }
 

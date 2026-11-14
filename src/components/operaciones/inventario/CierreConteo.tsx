@@ -8,6 +8,8 @@ import { numeroConfirmado, type ModoCierre } from "@/lib/inventario/conteo";
 interface Resumen {
   sessionId: string;
   applyMode: "ON_CLOSE" | "LIVE";
+  /** ZERO: el inventario partió desde 0; lo no contado debería quedar en 0. */
+  startMode?: "KEEP" | "ZERO";
   contados: number;
   pendientes: number;
   movidosDesdeElConteo: number;
@@ -43,7 +45,14 @@ export default function CierreConteo({
 
   return (
     <div className="rounded-2xl border border-white/10 bg-white/5 p-4 space-y-3 mt-4">
-      <p className="text-sm font-black text-white">Cerrar conteo</p>
+      <p className="text-sm font-black text-white">Cerrar inventario</p>
+      {resumen.startMode === "ZERO" && (
+        <p className="text-xs text-amber-300 leading-relaxed">
+          Este inventario partió desde 0: para que lo no contado quede en 0, ciérralo con{" "}
+          <strong>Conteo total</strong>
+          {esAdmin ? "." : " (lo hace un administrador)."}
+        </p>
+      )}
       {hayLineasSinGuardar && (
         <p className="text-xs text-amber-300">Guarda primero lo que tienes en la lista de arriba.</p>
       )}

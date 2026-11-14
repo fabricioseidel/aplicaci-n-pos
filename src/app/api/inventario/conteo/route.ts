@@ -6,6 +6,7 @@ import {
   findOpenSession,
   openCount,
   type CountApplyMode,
+  type CountStartMode,
 } from "@/server/stock-count.service";
 
 export const dynamic = "force-dynamic";
@@ -38,7 +39,10 @@ export async function GET(req: Request) {
 
 /**
  * POST /api/inventario/conteo — abre el conteo de la sucursal.
- * Body: { branchId?, applyMode?, zeroNow? }
+ * Body: { branchId?, applyMode?, startMode?, zeroNow?, openedBy? }
+ *
+ * `startMode`: `KEEP` mantiene el inventario actual y sólo cambia lo
+ * escaneado; `ZERO` parte desde 0 (lo no contado queda en 0 al cerrar).
  *
  * `applyMode` por defecto es `ON_CLOSE`: el conteo no toca el stock hasta
  * cerrarse, así la tienda puede seguir vendiendo mientras se cuenta.
@@ -56,9 +60,17 @@ export async function POST(req: Request) {
       branchId?: string | null;
       zeroNow?: boolean;
       applyMode?: string;
+      startMode?: string;
+      openedBy?: string | null;
     };
 
     const applyMode: CountApplyMode = body.applyMode === "LIVE" ? "LIVE" : "ON_CLOSE";
+
+    const startMode: CountStartMode = body.startMode === "ZERO" ? "ZERO" : "KEEP";
+    const quien =
+      typeof body.openedBy === "string" && body.openedBy.trim()
+        ? body.openedBy.trim().slice(0, 60)
+        : null;
 
     if (body.zeroNow) {
       const soloAdmin = await requireApiAdmin();
@@ -72,7 +84,9 @@ export async function POST(req: Request) {
 
     const result = await openCount({
       branchId: body.branchId ?? null,
-      openedBy: auth.session.user?.name ?? auth.session.user?.email ?? auth.userId ?? null,
+      openedBy:
+        quien ?? auth.session.user?.name ?? auth.session.user?.email ?? auth.userId ?? null,
+      startMode,
       zeroNow: Boolean(body.zeroNow),
       applyMode,
     });

@@ -29,7 +29,7 @@ type OperationsMode = "VENTA" | "RECEPCION" | "CONTEO" | "CAJA" | "PRODUCTOS";
 const TABS: { id: OperationsMode; label: string; icon: typeof ShoppingCartIcon }[] = [
   { id: "VENTA", label: "Venta", icon: ShoppingCartIcon },
   { id: "RECEPCION", label: "Recepción", icon: ArchiveBoxArrowDownIcon },
-  { id: "CONTEO", label: "Conteo", icon: ClipboardDocumentCheckIcon },
+  { id: "CONTEO", label: "Inventario", icon: ClipboardDocumentCheckIcon },
   // Caja agrupa turno, cierre, historial y fiados: seis pestañas de primer
   // nivel a 8px no se leían en un teléfono, y el historial no tenía dónde ir.
   { id: "CAJA", label: "Caja", icon: BanknotesIcon },

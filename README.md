@@ -11,7 +11,7 @@ tienda pública. Una barra de seis pestañas y nada más.
 | --- | --- |
 | **Venta** | Carrito, escaneo, pago mixto (efectivo / tarjeta / transferencia), venta por peso |
 | **Recepción** | Escanea mercadería que llega y **suma** stock (`apply_reception`) |
-| **Conteo** | Toma de inventario: **fija** la cantidad real (`apply_stock_absolute`) |
+| **Inventario** | Modo inventario: sesión compartida entre teléfonos, lotes por persona, vencimiento y precio (`apply_stock_absolute`) |
 | **Caja** | Abre turno, ingresos y egresos manuales de efectivo |
 | **Cierre** | Arqueo por método de pago contra lo esperado (`close_shift`) |
 | **Productos** | Alta y edición de productos, incluido el marcado "se vende por peso" |
@@ -53,6 +53,35 @@ Login por email + contraseña contra la tabla `users` (hash bcrypt en
 protege todo salvo `/login`, `/api/auth/*` y los estáticos.
 
 No hay Google OAuth a propósito: acá se entra con la cuenta de la tienda.
+
+## Inventario (modo inventario)
+
+La pestaña se llama **Inventario** (antes Conteo). Al tocar **Iniciar modo
+inventario** se abre una sesión por sucursal que comparten todos los teléfonos:
+
+- **Cómo empieza**: *Mantener el inventario actual* (solo cambia lo escaneado) o
+  *Empezar desde 0* (solo admin; lo no contado queda en 0 al cerrar con «Conteo
+  total»). En ambos casos el stock se aplica **al cerrar**, descontando lo
+  vendido entre medio. Queda en `stock_count_sessions.start_mode`.
+- **Quién cuenta**: cada teléfono usa su persona del selector «¿Quién atiende?».
+  Cada lote guardado queda a su nombre (`stock_count_tags.counted_by`) y lo que
+  cuentan varias personas del mismo producto **se suma** (3 + 5 + 2 = 10).
+- **Al escanear**: la línea muestra el precio de venta (se corrige ahí mismo), el
+  vencimiento (opcional; `products.expiry_date` queda con el más próximo de la
+  sesión) y un lápiz que abre la ficha completa.
+- **Sin coincidencia**: se ofrece crear el producto (nombre, precio, vencimiento
+  y código; nada es obligatorio) o elegir uno existente; un admin puede además
+  dejarle el código escaneado.
+- **Historial**: cada lote es una subida con persona, hora y detalle
+  (`/api/inventario/conteo/historial`), más el total por persona. Lo que se
+  reemplaza con «Corregir» se copia a `stock_count_tags_anuladas`. Los
+  inventarios cerrados quedan consultables en la pantalla de inicio.
+- **Otros teléfonos**: el avance se refresca solo cada 12 segundos.
+
+Requiere la migración `20261114000000_inventario_por_sesion.sql` de OlivoWeb.
+Sin ella se puede contar igual, pero no hay historial, vencimiento ni «desde 0».
+
+Lo que sigue describe el motor del conteo, que no cambió.
 
 ## Conteo de inventario (toma de inventario)
 

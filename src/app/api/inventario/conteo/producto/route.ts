@@ -30,7 +30,13 @@ export async function GET(req: Request) {
     const res = await countedProduct({ sessionId, barcode });
     if (!res.ok) return NextResponse.json({ error: res.error }, { status: 400 });
 
-    return NextResponse.json({ ok: true, contado: res.contado, marcas: res.marcas });
+    return NextResponse.json({
+      ok: true,
+      contado: res.contado,
+      marcas: res.marcas,
+      porPersona: res.porPersona,
+      vencimiento: res.vencimiento,
+    });
   } catch (e) {
     return errorResponse(e);
   }
