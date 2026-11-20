@@ -8,6 +8,8 @@ import { numeroConfirmado, type ModoCierre } from "@/lib/inventario/conteo";
 interface Resumen {
   sessionId: string;
   applyMode: "ON_CLOSE" | "LIVE";
+  /** ZERO: el inventario partió desde 0; lo no contado debería quedar en 0. */
+  startMode?: "KEEP" | "ZERO";
   contados: number;
   pendientes: number;
   movidosDesdeElConteo: number;
@@ -43,7 +45,14 @@ export default function CierreConteo({
 
   return (
     <div className="rounded-2xl border border-white/10 bg-white/5 p-4 space-y-3 mt-4">
-      <p className="text-sm font-black text-white">Cerrar conteo</p>
+      <p className="text-sm font-black text-white">Cerrar inventario</p>
+      {resumen.startMode === "ZERO" && (
+        <p className="text-xs text-amber-300 leading-relaxed">
+          Este inventario partió desde 0: para que lo no contado quede en 0, ciérralo con{" "}
+          <strong>Conteo total</strong>
+          {esAdmin ? "." : " (lo hace un administrador)."}
+        </p>
+      )}
       {hayLineasSinGuardar && (
         <p className="text-xs text-amber-300">Guarda primero lo que tienes en la lista de arriba.</p>
       )}
@@ -54,7 +63,7 @@ export default function CierreConteo({
         className="w-full min-h-14 rounded-2xl bg-emerald-500 text-black px-4 py-3 text-left disabled:bg-white/10 disabled:text-white/40"
       >
         <span className="flex items-center gap-2 text-sm font-black uppercase tracking-widest">
-          <CheckCircleIcon className="w-5 h-5 shrink-0" /> Solo aplicar lo escaneado
+          <CheckCircleIcon className="w-5 h-5 shrink-0" /> Cerrar y aplicar lo escaneado
         </span>
         <span className="block text-xs font-bold opacity-70 mt-0.5">
           {n(resumen.contados)} contados quedan con lo registrado. Lo demás no cambia.
@@ -82,8 +91,9 @@ export default function CierreConteo({
 
       {confirmarEscaneado && (
         <Confirmar
-          titulo="¿Aplicar lo escaneado?"
+          titulo="¿Cerrar el inventario para todos?"
           avisos={[
+            "Esto termina el inventario en TODOS los teléfonos. Para subir un lote usa «Guardar lote», no esto.",
             `${n(resumen.contados)} productos quedan con la cantidad contada` +
               (resumen.applyMode === "ON_CLOSE" ? ", menos lo vendido después de contarlos." : "."),
             "Los contados en 0 salen del catálogo.",
@@ -91,7 +101,7 @@ export default function CierreConteo({
           ]}
           acciones={[
             {
-              label: "Sí, aplicar y cerrar",
+              label: "Sí, cerrar para todos",
               tono: "primario",
               onClick: () => {
                 setConfirmarEscaneado(false);
