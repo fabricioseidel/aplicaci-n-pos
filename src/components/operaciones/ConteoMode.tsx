@@ -208,7 +208,7 @@ export default function ConteoMode() {
   }, []);
 
   // ── Estado del conteo en el servidor ──────────────────────────────
-  const cargarProgreso = useCallback(async () => {
+  const cargarProgreso = useCallback(async (): Promise<CountProgress | null | undefined> => {
     try {
       const url = currentBranch?.id
         ? `/api/inventario/conteo?branchId=${encodeURIComponent(currentBranch.id)}`
@@ -228,11 +228,13 @@ export default function ConteoMode() {
           ? { sessionId: sesion.sessionId, openedAt: sesion.openedAt, openedBy: sesion.openedBy }
           : null
       );
+      return sesion;
     } catch {
       // Sin red no se sabe el progreso, pero sí con qué conteo se estaba
       // trabajando: se sigue escaneando y el outbox lo entrega al volver.
       setProgreso(null);
       setSinConexion(true);
+      return undefined;
     } finally {
       setCargando(false);
     }
@@ -501,6 +503,19 @@ export default function ConteoMode() {
     if (lineas.length === 0 || !sessionIdActivo) return;
     setGuardando(true);
     try {
+      await enviarLote(sessionIdActivo, true);
+    } finally {
+      setGuardando(false);
+    }
+  };
+
+  /**
+   * Manda la lista a `sessionId`. Si otro teléfono cerró ese inventario
+   * mientras se contaba, la lista NO se pierde: se busca el inventario abierto
+   * de ahora y, si hay uno, el lote se manda ahí (una sola vez).
+   */
+  const enviarLote = async (sessionId: string, reintentar: boolean): Promise<void> => {
+    {
       const res = await apiWrite<{
         aplicados: number;
         ajustados: number;
@@ -522,7 +537,7 @@ export default function ConteoMode() {
           })),
           // Quién cuenta en este teléfono: el lote queda a su nombre.
           countedBy: quien,
-          sessionId: sessionIdActivo,
+          sessionId,
           branchId: currentBranch?.id ?? null,
         },
       });
@@ -535,6 +550,21 @@ export default function ConteoMode() {
       }
 
       if (!res.ok) {
+        if (/cerrad/i.test(res.error ?? "")) {
+          const actual = await cargarProgreso();
+          if (reintentar && actual && actual.status === "OPEN" && actual.sessionId !== sessionId) {
+            showToast("Otro teléfono cerró el inventario anterior: guardando en el que está abierto…", "info");
+            await enviarLote(actual.sessionId, false);
+            return;
+          }
+          showToast(
+            `Otro teléfono cerró el inventario. Tus ${lineas.length} productos siguen aquí: ` +
+              "inicia el modo inventario y guárdalos.",
+            "error",
+            8000
+          );
+          return;
+        }
         showToast(res.error, "error");
         return;
       }
@@ -553,8 +583,6 @@ export default function ConteoMode() {
       setLineas([]);
       await cargarProgreso();
       void refrescarCatalogo();
-    } finally {
-      setGuardando(false);
     }
   };
 

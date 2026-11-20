@@ -142,3 +142,33 @@ describe("Inventario · lote", () => {
     expect(await screen.findByText(/Alfredo 5 \+ Mariana 3 · total 9/)).toBeTruthy();
   });
 });
+
+describe("Inventario · dos teléfonos", () => {
+  it("si otro teléfono cerró el inventario, el lote se guarda en el que está abierto", async () => {
+    let abierta = sesion;
+    (fetch as unknown as ReturnType<typeof vi.fn>).mockImplementation(async (url: string) => {
+      const u = String(url);
+      const json = (b: unknown) => ({ ok: true, json: async () => b });
+      if (u.startsWith("/api/inventario/buscar")) return json({ productos: [] });
+      if (u.startsWith("/api/inventario/conteo/producto")) return json({});
+      return json({ session: abierta });
+    });
+    const write = apiWrite as unknown as ReturnType<typeof vi.fn>;
+    write
+      .mockImplementationOnce(async () => {
+        abierta = { ...sesion, sessionId: "s2" };
+        return { ok: false, error: "El conteo ya está cerrado" };
+      })
+      .mockResolvedValueOnce({ ok: true, data: { aplicados: 1 } });
+
+    render(<ConteoMode />);
+    await escribir("arroz");
+    fireEvent.click(await screen.findByText("Arroz"));
+    fireEvent.click(await screen.findByText("Guardar lote (1)"));
+
+    await waitFor(() => expect(write).toHaveBeenCalledTimes(2));
+    const sesiones = write.mock.calls.map((c) => (c[0] as { payload: { sessionId: string } }).payload.sessionId);
+    expect(sesiones).toEqual(["s1", "s2"]);
+    await waitFor(() => expect(screen.getByText(/Sin guardar \(0\)/i)).toBeTruthy());
+  });
+});
