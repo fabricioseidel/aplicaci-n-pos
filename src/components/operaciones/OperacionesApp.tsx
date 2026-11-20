@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   ShoppingCartIcon,
   ArchiveBoxArrowDownIcon,
@@ -20,6 +20,7 @@ import { useOpenShift } from "@/hooks/useOpenShift";
 import SaleMode from "@/components/operaciones/SaleMode";
 import ReceptionMode from "@/components/operaciones/ReceptionMode";
 import CajaSection from "@/components/operaciones/CajaSection";
+import { useActualizacionApp } from "@/hooks/useActualizacionApp";
 import ConteoMode from "@/components/operaciones/ConteoMode";
 import ProductosMode from "@/components/operaciones/ProductosMode";
 import BranchSwitcher from "@/components/operaciones/BranchSwitcher";
@@ -82,7 +83,26 @@ function SyncBadge() {
 }
 
 export default function OperacionesApp() {
-  const [mode, setMode] = useState<OperationsMode>("VENTA");
+  // La pestaña se recuerda en la pestaña del navegador: si la app se recarga
+  // para actualizarse, vuelve a donde estaba (por ejemplo, al inventario).
+  const [mode, setModeState] = useState<OperationsMode>("VENTA");
+  useEffect(() => {
+    try {
+      const guardado = sessionStorage.getItem("olivo-pos.pestana") as OperationsMode | null;
+      if (guardado && TABS.some((t) => t.id === guardado)) setModeState(guardado);
+    } catch {
+      /* noop */
+    }
+  }, []);
+  const setMode = (m: OperationsMode) => {
+    setModeState(m);
+    try {
+      sessionStorage.setItem("olivo-pos.pestana", m);
+    } catch {
+      /* noop */
+    }
+  };
+  const { hayNueva, actualizar } = useActualizacionApp();
   const { currentBranch } = useBranch();
   const {
     open: cajaAbierta,
@@ -134,6 +154,16 @@ export default function OperacionesApp() {
           ))}
         </div>
       </div>
+
+      {hayNueva && (
+        <button
+          type="button"
+          onClick={actualizar}
+          className="w-full min-h-11 px-4 bg-emerald-500 text-black text-xs font-black uppercase tracking-widest"
+        >
+          Hay una versión nueva · tocar para actualizar
+        </button>
+      )}
 
       <div className="flex-1 min-h-0 overflow-y-auto">
         {mode === "VENTA" && ventaBloqueada && (

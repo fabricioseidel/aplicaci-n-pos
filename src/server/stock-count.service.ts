@@ -362,6 +362,81 @@ export async function codigosRenombrados(codigos: string[]): Promise<Map<string,
   return mapa;
 }
 
+export interface ProductoContado {
+  barcode: string;
+  name: string;
+  total: number;
+  marcas: number;
+  porPersona: Array<{ por: string; qty: number }>;
+  /** Última vez que se guardó una marca de este producto. */
+  ultimo: string;
+}
+
+/**
+ * Todo lo ya escaneado en la sesión, por producto: total, cuántas veces se
+ * guardó y quién contó cuánto. Lo más reciente primero. Sólo usa tablas que
+ * existen desde el primer conteo, así que funciona sin la migración nueva.
+ */
+export async function countedList(
+  sessionId: string
+): Promise<{ ok: true; productos: ProductoContado[] } | Fallo> {
+  const { data, error } = await supabaseServer
+    .from("stock_count_tags")
+    .select("product_barcode, qty, counted_by, counted_at")
+    .eq("session_id", sessionId)
+    .order("counted_at", { ascending: false })
+    .limit(50000);
+  if (error) return { ok: false, error: error.message };
+
+  const porCodigo = new Map<string, ProductoContado & { personas: Map<string, number> }>();
+  for (const t of (data ?? []) as Array<{
+    product_barcode: string;
+    qty: number | string;
+    counted_by: string | null;
+    counted_at: string;
+  }>) {
+    const qty = Number(t.qty ?? 0);
+    const por = t.counted_by?.trim() || "Sin nombre";
+    let p = porCodigo.get(t.product_barcode);
+    if (!p) {
+      p = {
+        barcode: t.product_barcode,
+        name: t.product_barcode,
+        total: 0,
+        marcas: 0,
+        porPersona: [],
+        ultimo: t.counted_at,
+        personas: new Map(),
+      };
+      porCodigo.set(t.product_barcode, p);
+    }
+    p.total += qty;
+    p.marcas += 1;
+    p.personas.set(por, (p.personas.get(por) ?? 0) + qty);
+  }
+
+  const codigos = [...porCodigo.keys()];
+  for (let i = 0; i < codigos.length; i += 200) {
+    const { data: nombres } = await supabaseServer
+      .from("products")
+      .select("barcode, name")
+      .in("barcode", codigos.slice(i, i + 200));
+    for (const n of (nombres ?? []) as Array<{ barcode: string; name: string | null }>) {
+      const p = porCodigo.get(n.barcode);
+      if (p && n.name) p.name = n.name;
+    }
+  }
+
+  return {
+    ok: true,
+    productos: [...porCodigo.values()].map(({ personas, ...p }) => ({
+      ...p,
+      total: Math.round(p.total * 1000) / 1000,
+      porPersona: [...personas.entries()].map(([por, qty]) => ({ por, qty })),
+    })),
+  };
+}
+
 /**
  * Cuánto lleva contado un producto en la sesión abierta.
  *

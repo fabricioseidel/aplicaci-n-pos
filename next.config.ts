@@ -3,6 +3,12 @@ import withSerwistInit from "@serwist/next";
 
 const nextConfig: NextConfig = {
   compress: true,
+  // Versión de la compilación (el commit en Vercel). El teléfono la compara
+  // con /api/version para saber si quedó con código viejo y actualizarse.
+  env: {
+    NEXT_PUBLIC_APP_VERSION:
+      process.env.VERCEL_GIT_COMMIT_SHA || process.env.VERCEL_DEPLOYMENT_ID || `local-${Date.now()}`,
+  },
   images: {
     formats: ["image/avif", "image/webp"],
     minimumCacheTTL: 60 * 60 * 24 * 7,

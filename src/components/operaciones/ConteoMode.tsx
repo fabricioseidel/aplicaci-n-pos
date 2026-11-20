@@ -17,6 +17,7 @@ import {
 import UnifiedScanner from "@/components/scanner/UnifiedScanner";
 import SinCoincidencia from "@/components/operaciones/inventario/SinCoincidencia";
 import HistorialInventario from "@/components/operaciones/inventario/HistorialInventario";
+import YaEscaneados, { type ProductoContado } from "@/components/operaciones/inventario/YaEscaneados";
 import PriceSheet from "@/components/operaciones/PriceSheet";
 import FichaProducto from "@/components/operaciones/productos/FichaProducto";
 import { useAttendant } from "@/hooks/useAttendant";
@@ -158,6 +159,9 @@ export default function ConteoMode() {
    * Mientras no, esas partes no se muestran (se guardarían en el aire).
    */
   const [extras, setExtras] = useState(false);
+  /** Todo lo ya guardado en este inventario (todos los teléfonos), por producto. */
+  const [yaEscaneados, setYaEscaneados] = useState<ProductoContado[]>([]);
+  const contadosRef = useRef<Map<string, ProductoContado>>(new Map());
 
   const [lineas, setLineas] = useState<Linea[]>([]);
   const [query, setQuery] = useState("");
@@ -298,6 +302,18 @@ export default function ConteoMode() {
       // Se mira en el espejo y no dentro del actualizador: React puede
       // ejecutarlo después, y entonces la consulta de abajo no salía nunca.
       const esNueva = !lineasRef.current.some((l) => l.barcode === barcode);
+      // Lo que ya se guardó de este producto en el inventario, según la lista
+      // que la pantalla mantiene al día: el aviso sale al instante, sin red.
+      const previo = esNueva ? contadosRef.current.get(barcode) : undefined;
+      if (previo && previo.total > 0) {
+        showToast(
+          `${product.name}: YA SE CONTARON ${previo.total} (` +
+            previo.porPersona.map((x) => `${x.por} ${x.qty}`).join(" + ") +
+            "). Lo que cuentes ahora se SUMA. Si es el mismo lugar, toca Corregir.",
+          "warning",
+          7000
+        );
+      }
 
       setLineas((prev) => {
         const idx = prev.findIndex((l) => l.barcode === barcode);
@@ -308,7 +324,8 @@ export default function ConteoMode() {
               name: product.name,
               qty: cantidad ?? paso,
               sistema: Number(product.stock ?? 0),
-              yaContado: null,
+              yaContado: previo ? previo.total : null,
+              porPersona: previo?.porPersona,
               reemplazar: false,
               byWeight: Boolean(product.byWeight),
               price: Number(product.price ?? 0),
@@ -354,12 +371,12 @@ export default function ConteoMode() {
               )
             );
           } catch {
-            /* sin red queda en null: sumar no necesita saber el total previo */
+            /* sin red queda lo que se sabía: sumar no necesita el total previo */
           }
         })();
       }
     },
-    []
+    [showToast]
   );
 
   const onDetected = useCallback(
@@ -496,6 +513,64 @@ export default function ConteoMode() {
     if (marcasVistas.current !== null && marcasVistas.current !== marcas) setNovedades((n) => n + 1);
     marcasVistas.current = marcas;
   }, [sesionAbierta?.marcas]);
+
+  // Lo ya escaneado se recarga al entrar al inventario y cada vez que cambia
+  // el número de marcas guardadas (propias o de otro teléfono).
+  const cargarContados = useCallback(async (sessionId: string) => {
+    try {
+      const res = await fetch(
+        `/api/inventario/conteo/contados?sessionId=${encodeURIComponent(sessionId)}`,
+        { cache: "no-store" }
+      );
+      if (!res.ok) return;
+      const data = (await res.json()) as { productos?: ProductoContado[] };
+      const lista = data.productos ?? [];
+      contadosRef.current = new Map(lista.map((p) => [p.barcode, p]));
+      setYaEscaneados(lista);
+      // Las líneas sin guardar se ponen al día con lo que guardaron los demás.
+      setLineas((prev) =>
+        prev.map((l) => {
+          const c = contadosRef.current.get(l.barcode);
+          return c ? { ...l, yaContado: c.total, porPersona: c.porPersona } : l;
+        })
+      );
+    } catch {
+      /* sin red queda la última lista */
+    }
+  }, []);
+
+  useEffect(() => {
+    if (sessionIdActivo && !sinConexion) void cargarContados(sessionIdActivo);
+  }, [sessionIdActivo, sinConexion, sesionAbierta?.marcas, cargarContados]);
+
+  /** "Corregir" desde la lista de ya escaneados: a la lista, para reemplazar. */
+  const corregirContado = (c: ProductoContado) => {
+    const producto = catalogo.find((p) => (p.barcode || p.id) === c.barcode);
+    setLineas((prev) => {
+      const idx = prev.findIndex((l) => l.barcode === c.barcode);
+      if (idx !== -1) {
+        const next = [...prev];
+        next[idx] = { ...next[idx], qty: c.total, reemplazar: true, yaContado: c.total, porPersona: c.porPersona };
+        return next;
+      }
+      return [
+        {
+          barcode: c.barcode,
+          name: c.name,
+          qty: c.total,
+          sistema: Number(producto?.stock ?? 0),
+          yaContado: c.total,
+          porPersona: c.porPersona,
+          reemplazar: true,
+          byWeight: Boolean(producto?.byWeight),
+          price: Number(producto?.price ?? 0),
+          expiry: "",
+        },
+        ...prev,
+      ];
+    });
+    showToast(`${c.name}: escribe la cantidad REAL y guarda. Reemplaza los ${c.total} contados.`, "info", 6000);
+  };
 
   // La ficha completa necesita las categorías; se piden una vez.
   useEffect(() => {
@@ -954,6 +1029,11 @@ export default function ConteoMode() {
                     <p className="text-sm font-bold text-white truncate">{p.name}</p>
                     <p className="text-[10px] text-white/40 font-mono mt-0.5">
                       {p.barcode || p.id} · sistema {p.stock}
+                      {contadosRef.current.has(p.barcode || p.id) && (
+                        <span className="text-amber-300 font-black">
+                          {" "}· ya contado {contadosRef.current.get(p.barcode || p.id)!.total}
+                        </span>
+                      )}
                     </p>
                   </div>
                 </button>
@@ -1174,6 +1254,10 @@ export default function ConteoMode() {
       >
         {guardando ? "Guardando…" : `Guardar lote (${lineas.length})`}
       </button>
+
+      {sessionIdActivo && !sinConexion && (
+        <YaEscaneados productos={yaEscaneados} onCorregir={corregirContado} />
+      )}
 
       {sessionIdActivo && !sinConexion && extras && (
         <HistorialInventario sessionId={sessionIdActivo} refrescar={novedades} />
