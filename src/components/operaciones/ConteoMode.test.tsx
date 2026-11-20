@@ -190,3 +190,27 @@ describe("Inventario · base sin migrar", () => {
     expect(screen.queryByText(/Historial de lotes/)).toBeNull();
   });
 });
+
+describe("Inventario · ya escaneados", () => {
+  it("avisa al instante que el producto ya se contó y lo muestra en la lista", async () => {
+    (fetch as unknown as ReturnType<typeof vi.fn>).mockImplementation(async (url: string) => {
+      const u = String(url);
+      const json = (b: unknown) => ({ ok: true, json: async () => b });
+      if (u.startsWith("/api/inventario/buscar")) return json({ productos: [] });
+      if (u.startsWith("/api/inventario/conteo/contados"))
+        return json({
+          productos: [
+            { barcode: "333", name: "Arroz", total: 8, marcas: 2, porPersona: [{ por: "Ingrid", qty: 8 }], ultimo: new Date().toISOString() },
+          ],
+        });
+      if (u.startsWith("/api/inventario/conteo/producto")) return json({});
+      return json({ session: { ...sesion, marcas: 2 }, extras: false });
+    });
+    render(<ConteoMode />);
+    expect(await screen.findByText(/Ya escaneados \(1 productos · 8 u\.\)/)).toBeTruthy();
+    await escribir("arroz");
+    expect(await screen.findByText(/ya contado 8/)).toBeTruthy();
+    fireEvent.click(screen.getByText("Arroz"));
+    expect(await screen.findByText(/Ingrid 8 · total 9/)).toBeTruthy();
+  });
+});
