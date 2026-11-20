@@ -31,6 +31,8 @@ interface Props {
   /** Catálogo cargado (activos), para buscar el producto existente. */
   products: ProductUI[];
   esAdmin: boolean;
+  /** false mientras la base no guarda vencimientos: el campo no se muestra. */
+  conVencimiento?: boolean;
   onClose: () => void;
   /** `codigoAnterior`: el producto cambió su código genérico por el escaneado. */
   onListo: (product: ProductUI, datos: DatosConteo, codigoAnterior?: string) => void;
@@ -57,6 +59,7 @@ export default function SinCoincidencia({
   initialName = "",
   products,
   esAdmin,
+  conVencimiento = true,
   onClose,
   onListo,
 }: Props) {
@@ -221,7 +224,7 @@ export default function SinCoincidencia({
     "w-full bg-black border border-white/10 rounded-xl px-3 py-2.5 text-white text-sm outline-none focus:border-emerald-500";
 
   const cantidadYVencimiento = (
-    <div className="grid grid-cols-2 gap-3">
+    <div className={`grid gap-3 ${conVencimiento ? "grid-cols-2" : "grid-cols-1"}`}>
       <div>
         <label className={etiqueta}>{porPeso || elegido?.byWeight ? "Kilos contados" : "Cantidad contada"}</label>
         <QtyInput
@@ -233,10 +236,12 @@ export default function SinCoincidencia({
           className={`${campo} tabular-nums font-black`}
         />
       </div>
-      <div>
-        <label className={etiqueta}>Vence (opcional)</label>
-        <input type="date" value={expiry} onChange={(e) => setExpiry(e.target.value)} className={campo} />
-      </div>
+      {conVencimiento && (
+        <div>
+          <label className={etiqueta}>Vence (opcional)</label>
+          <input type="date" value={expiry} onChange={(e) => setExpiry(e.target.value)} className={campo} />
+        </div>
+      )}
     </div>
   );
 

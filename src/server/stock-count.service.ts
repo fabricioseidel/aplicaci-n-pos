@@ -100,6 +100,17 @@ export function esFecha(v: unknown): v is string {
   return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === v;
 }
 
+/**
+ * true si la base ya tiene la migración 20261114000000 (vencimiento por
+ * marca, historial de lotes, "empezar desde 0"). Sin ella el inventario
+ * funciona igual que antes y la pantalla esconde esas funciones, para que
+ * nadie anote un vencimiento que no se guardaría.
+ */
+export async function soportaExtras(): Promise<boolean> {
+  const { error } = await supabaseServer.from("stock_count_tags").select("expiry_date").limit(1);
+  return !error;
+}
+
 /** Abre el conteo de la sucursal, o devuelve el que ya estaba abierto. */
 export async function openCount({
   branchId,

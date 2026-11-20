@@ -153,6 +153,11 @@ export default function ConteoMode() {
   /** Sube cada vez que hay lotes nuevos (propios o de otro teléfono). */
   const [novedades, setNovedades] = useState(0);
   const marcasVistas = useRef<number | null>(null);
+  /**
+   * La base tiene lo necesario para vencimiento, historial y "desde 0".
+   * Mientras no, esas partes no se muestran (se guardarían en el aire).
+   */
+  const [extras, setExtras] = useState(false);
 
   const [lineas, setLineas] = useState<Linea[]>([]);
   const [query, setQuery] = useState("");
@@ -219,6 +224,7 @@ export default function ConteoMode() {
 
       const sesion = (data.session ?? null) as CountProgress | null;
       setProgreso(sesion);
+      setExtras(data.extras === true);
       setSinConexion(false);
 
       // El servidor manda: si allá el conteo se cerró, se olvida acá también.
@@ -533,7 +539,7 @@ export default function ConteoMode() {
             barcode: l.barcode,
             qty: l.qty,
             replace: l.reemplazar,
-            ...(l.expiry ? { expiry: l.expiry } : {}),
+            ...(extras && l.expiry ? { expiry: l.expiry } : {}),
           })),
           // Quién cuenta en este teléfono: el lote queda a su nombre.
           countedBy: quien,
@@ -753,14 +759,14 @@ export default function ConteoMode() {
 
             <label
               className={`flex items-start gap-3 rounded-2xl border p-3 transition-colors ${
-                esAdmin ? "cursor-pointer" : "opacity-50"
+                esAdmin && extras ? "cursor-pointer" : "opacity-50"
               } ${inicio === "ZERO" ? "border-amber-500/50 bg-amber-500/10" : "border-white/10 bg-white/5"}`}
             >
               <input
                 type="radio"
                 name="inicio-inventario"
                 checked={inicio === "ZERO"}
-                disabled={!esAdmin}
+                disabled={!esAdmin || !extras}
                 onChange={() => setInicio("ZERO")}
                 className="mt-0.5 w-4 h-4 accent-amber-500"
               />
@@ -792,7 +798,7 @@ export default function ConteoMode() {
           </button>
         </div>
 
-        <InventariosAnteriores branchId={currentBranch?.id ?? null} />
+        {extras && <InventariosAnteriores branchId={currentBranch?.id ?? null} />}
       </div>
     );
   }
@@ -1095,6 +1101,7 @@ export default function ConteoMode() {
                           ? `$${(l.price ?? 0).toLocaleString("es-CL")}${l.byWeight ? "/kg" : ""}`
                           : "Sin precio"}
                       </button>
+                      {extras && (
                       <label className="min-h-11 px-3 rounded-xl border border-white/10 bg-white/5 flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-white/40">
                         Vence
                         <input
@@ -1105,6 +1112,7 @@ export default function ConteoMode() {
                           className="bg-transparent text-white text-xs font-bold outline-none [color-scheme:dark]"
                         />
                       </label>
+                      )}
                       <button
                         onClick={() => setEditando(l.barcode)}
                         aria-label={`Editar ${l.name}`}
@@ -1167,7 +1175,7 @@ export default function ConteoMode() {
         {guardando ? "Guardando…" : `Guardar lote (${lineas.length})`}
       </button>
 
-      {sessionIdActivo && !sinConexion && (
+      {sessionIdActivo && !sinConexion && extras && (
         <HistorialInventario sessionId={sessionIdActivo} refrescar={novedades} />
       )}
 
@@ -1188,6 +1196,7 @@ export default function ConteoMode() {
           initialName={creando.name}
           products={catalogo}
           esAdmin={esAdmin}
+          conVencimiento={extras}
           onClose={() => setCreando(null)}
           onListo={(product, datos, codigoAnterior) => {
             if (codigoAnterior) {

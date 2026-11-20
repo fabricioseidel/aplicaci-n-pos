@@ -49,7 +49,7 @@ beforeEach(() => {
         return json({ productos: base.filter((p) => q.split(" ").every((w) => p.name.toLowerCase().includes(w))) });
       }
       if (u.startsWith("/api/inventario/conteo/producto")) return json({});
-      return json({ session: sesion });
+      return json({ session: sesion, extras: true });
     })
   );
 });
@@ -134,7 +134,7 @@ describe("Inventario · lote", () => {
       if (u.startsWith("/api/inventario/conteo/producto"))
         return json({ contado: 8, porPersona: [{ por: "Alfredo", qty: 5 }, { por: "Mariana", qty: 3 }] });
       if (u.startsWith("/api/inventario/buscar")) return json({ productos: [] });
-      return json({ session: sesion });
+      return json({ session: sesion, extras: true });
     });
     render(<ConteoMode />);
     await escribir("arroz");
@@ -151,7 +151,7 @@ describe("Inventario · dos teléfonos", () => {
       const json = (b: unknown) => ({ ok: true, json: async () => b });
       if (u.startsWith("/api/inventario/buscar")) return json({ productos: [] });
       if (u.startsWith("/api/inventario/conteo/producto")) return json({});
-      return json({ session: abierta });
+      return json({ session: abierta, extras: true });
     });
     const write = apiWrite as unknown as ReturnType<typeof vi.fn>;
     write
@@ -170,5 +170,23 @@ describe("Inventario · dos teléfonos", () => {
     const sesiones = write.mock.calls.map((c) => (c[0] as { payload: { sessionId: string } }).payload.sessionId);
     expect(sesiones).toEqual(["s1", "s2"]);
     await waitFor(() => expect(screen.getByText(/Sin guardar \(0\)/i)).toBeTruthy());
+  });
+});
+
+describe("Inventario · base sin migrar", () => {
+  it("no muestra el vencimiento si la base todavía no lo guarda", async () => {
+    (fetch as unknown as ReturnType<typeof vi.fn>).mockImplementation(async (url: string) => {
+      const u = String(url);
+      const json = (b: unknown) => ({ ok: true, json: async () => b });
+      if (u.startsWith("/api/inventario/buscar")) return json({ productos: [] });
+      if (u.startsWith("/api/inventario/conteo/producto")) return json({ contado: 4, marcas: 1 });
+      return json({ session: sesion, extras: false });
+    });
+    render(<ConteoMode />);
+    await escribir("arroz");
+    fireEvent.click(await screen.findByText("Arroz"));
+    expect(await screen.findByText(/Ya contado 4 · total 5/)).toBeTruthy();
+    expect(screen.queryByLabelText("Vencimiento de Arroz")).toBeNull();
+    expect(screen.queryByText(/Historial de lotes/)).toBeNull();
   });
 });

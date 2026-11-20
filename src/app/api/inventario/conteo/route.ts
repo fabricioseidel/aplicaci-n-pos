@@ -5,6 +5,7 @@ import {
   countProgress,
   findOpenSession,
   openCount,
+  soportaExtras,
   type CountApplyMode,
   type CountStartMode,
 } from "@/server/stock-count.service";
@@ -26,12 +27,13 @@ export async function GET(req: Request) {
 
     const abierta = await findOpenSession(branchId);
     if (!abierta.ok) return NextResponse.json({ error: abierta.error }, { status: 400 });
-    if (!abierta.sessionId) return NextResponse.json({ session: null });
+    const extras = await soportaExtras();
+    if (!abierta.sessionId) return NextResponse.json({ session: null, extras });
 
     const progreso = await countProgress(abierta.sessionId);
     if (!progreso.ok) return NextResponse.json({ error: progreso.error }, { status: 400 });
 
-    return NextResponse.json({ session: progreso.progress });
+    return NextResponse.json({ session: progreso.progress, extras });
   } catch (e) {
     return errorResponse(e);
   }
