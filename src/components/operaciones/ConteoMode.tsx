@@ -1189,7 +1189,13 @@ export default function ConteoMode() {
           products={catalogo}
           esAdmin={esAdmin}
           onClose={() => setCreando(null)}
-          onListo={(product, datos) => {
+          onListo={(product, datos, codigoAnterior) => {
+            if (codigoAnterior) {
+              // Lo que ya estaba en la lista con el código genérico pasa al real.
+              setLineas((prev) =>
+                prev.map((l) => (l.barcode === codigoAnterior ? { ...l, barcode: product.barcode || product.id } : l))
+              );
+            }
             upsertLocal(product);
             agregar(product, datos.qty, datos.expiry);
             setCreando(null);

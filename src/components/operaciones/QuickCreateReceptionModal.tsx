@@ -2,7 +2,14 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { BoltIcon, XMarkIcon, ArrowPathIcon, ArrowsRightLeftIcon } from "@heroicons/react/24/outline";
-import { saveProduct, DEFAULT_IMAGE, ProductExistsError, usarProductoExistente } from "@/services/products";
+import {
+  adoptarCodigo,
+  saveProduct,
+  DEFAULT_IMAGE,
+  ProductExistsError,
+  usarProductoExistente,
+} from "@/services/products";
+import { esCodigoGenerico } from "@/lib/products/codigos";
 import { useToast } from "@/contexts/ToastContext";
 import { searchProducts } from "@/lib/pos/search";
 import MoneyInput from "@/components/ui/MoneyInput";
@@ -69,10 +76,33 @@ export default function QuickCreateReceptionModal({
     return searchProducts(products, trimmed).slice(0, 3);
   }, [name, products, dismissedSuggestions]);
 
-  const handleMerge = (product: ProductUI) => {
+  const handleMerge = async (product: ProductUI) => {
     if (!quantity || quantity <= 0) {
       showToast("Indica la cantidad", "error");
       return;
+    }
+    if (saving) return;
+    // El producto existe con un código genérico (INT-, SINCOD-, 9000000…) y
+    // se acaba de escanear su código real: se lo queda. Antes se perdía y la
+    // próxima vez el lector tampoco lo encontraba.
+    const escaneado = barcode.trim();
+    const actual = product.barcode || product.id;
+    if (escaneado && escaneado !== actual && esCodigoGenerico(actual)) {
+      setSaving(true);
+      try {
+        const nuevo = await adoptarCodigo(actual, escaneado);
+        showToast(`${product.name}: código ${nuevo} guardado`, "success");
+        onMerge({ ...product, id: nuevo, barcode: nuevo }, quantity);
+        return;
+      } catch (e) {
+        showToast(
+          `Se suma igual, pero el código no se guardó: ${e instanceof Error ? e.message : "error"}`,
+          "warning",
+          6000
+        );
+      } finally {
+        setSaving(false);
+      }
     }
     onMerge(product, quantity);
   };

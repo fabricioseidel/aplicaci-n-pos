@@ -272,6 +272,21 @@ export async function cambiarCodigo(barcode: string, nuevo: string): Promise<str
   return String(data.barcode);
 }
 
+/**
+ * El producto (con código genérico) se queda con el código recién escaneado.
+ * Lo puede hacer quien atiende. Devuelve el código que quedó.
+ */
+export async function adoptarCodigo(barcode: string, nuevo: string): Promise<string> {
+  const res = await fetch(`/api/products/${encodeURIComponent(barcode)}/adoptar-codigo`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ nuevo, atiende: quienAtiende() }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data?.error || "No se pudo guardar el código");
+  return String(data.barcode);
+}
+
 /** Sube la foto (ya comprimida) y la deja como imagen del producto. */
 export async function subirFoto(
   barcode: string,

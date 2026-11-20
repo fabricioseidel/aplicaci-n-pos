@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { ArrowPathIcon, ArrowsRightLeftIcon, PlusCircleIcon, XMarkIcon } from "@heroicons/react/24/outline";
 import {
+  adoptarCodigo,
   cambiarCodigo,
   DEFAULT_IMAGE,
   ProductExistsError,
@@ -13,6 +14,7 @@ import { useToast } from "@/contexts/ToastContext";
 import { searchProducts } from "@/lib/pos/search";
 import MoneyInput from "@/components/ui/MoneyInput";
 import QtyInput from "@/components/operaciones/inventario/QtyInput";
+import { esCodigoGenerico } from "@/lib/products/codigos";
 import type { ProductUI } from "@/types";
 
 /** Lo que se va a contar del producto elegido o recién creado. */
@@ -30,14 +32,13 @@ interface Props {
   products: ProductUI[];
   esAdmin: boolean;
   onClose: () => void;
-  onListo: (product: ProductUI, datos: DatosConteo) => void;
+  /** `codigoAnterior`: el producto cambió su código genérico por el escaneado. */
+  onListo: (product: ProductUI, datos: DatosConteo, codigoAnterior?: string) => void;
 }
 
 function codigoInterno(): string {
   return `INT-${Date.now().toString(36).toUpperCase()}`;
 }
-
-const esInterno = (codigo: string) => /^INT-/i.test(codigo);
 
 /**
  * El código escaneado no coincide con ningún producto (o se buscó por nombre
@@ -46,9 +47,10 @@ const esInterno = (codigo: string) => /^INT-/i.test(codigo);
  * - **Crear nuevo**: nombre, precio de venta, vencimiento y código. Ninguno
  *   bloquea: en pleno inventario lo que importa es que quede contado; lo que
  *   falte se completa después en Productos.
- * - **Es uno existente**: el producto ya está en el catálogo con otro código
- *   (o sin código). Se cuenta como ese, y un administrador puede además
- *   dejarle el código recién escaneado para que la próxima vez coincida.
+ * - **Es uno existente**: el producto ya está en el catálogo con otro código.
+ *   Se cuenta como ese y, si su código es genérico (INT-, SINCOD-, 9000000…),
+ *   se queda con el escaneado —quien sea que esté contando—, para que la
+ *   próxima vez coincida. Reemplazar un código real sigue siendo de admin.
  */
 export default function SinCoincidencia({
   initialBarcode = "",
@@ -118,10 +120,19 @@ export default function SinCoincidencia({
 
   const elegir = (p: ProductUI) => {
     setElegido(p);
-    // Un producto sin código propio (interno) casi seguro quiere el escaneado;
-    // uno con código real puede tener dos envases, así que no se asume.
-    setUsarCodigo(esAdmin && !!escaneado && esInterno(p.barcode || p.id));
+    setVista("existente");
+    // Un código genérico se reemplaza por el escaneado sin preguntar: es lo
+    // que se perdía. Uno real puede ser otro envase, así que no se asume.
+    setUsarCodigo(!!escaneado && esCodigoGenerico(p.barcode || p.id));
   };
+
+  // Mientras se escribe el nombre del producto "nuevo", puede resultar que ya
+  // existe: mejor contarlo como ese (y que se quede con el código) que crear
+  // un duplicado.
+  const parecidos = useMemo(
+    () => (vista === "crear" && name.trim().length >= 3 ? searchProducts(products, name).slice(0, 3) : []),
+    [vista, name, products]
+  );
 
   const crear = async () => {
     if (guardando) return;
@@ -175,15 +186,29 @@ export default function SinCoincidencia({
     setGuardando(true);
     try {
       let producto = elegido;
+      let anterior: string | undefined;
       if (elegido.isActive === false) {
         producto = (await usarProductoExistente(elegido.barcode || elegido.id)) ?? elegido;
       }
-      if (usarCodigo && escaneado) {
-        const nuevo = await cambiarCodigo(producto.barcode || producto.id, escaneado);
-        producto = { ...producto, id: nuevo, barcode: nuevo };
-        showToast(`${producto.name} ahora tiene el código ${nuevo}`, "success");
+      const actual = producto.barcode || producto.id;
+      if (usarCodigo && escaneado && escaneado !== actual) {
+        try {
+          const nuevo = esCodigoGenerico(actual)
+            ? await adoptarCodigo(actual, escaneado)
+            : await cambiarCodigo(actual, escaneado);
+          anterior = actual;
+          producto = { ...producto, id: nuevo, barcode: nuevo };
+          showToast(`${producto.name}: código ${nuevo} guardado`, "success");
+        } catch (e) {
+          // Se cuenta igual: perder el conteo por el código sería peor.
+          showToast(
+            `Contado, pero el código no se guardó: ${e instanceof Error ? e.message : "error"}`,
+            "warning",
+            6000
+          );
+        }
       }
-      onListo(producto, { qty, expiry });
+      onListo(producto, { qty, expiry }, anterior);
     } catch (err) {
       showToast(err instanceof Error ? err.message : "No se pudo actualizar el producto", "error");
     } finally {
@@ -262,6 +287,30 @@ export default function SinCoincidencia({
               <label className={etiqueta}>Nombre</label>
               <input value={name} onChange={(e) => setName(e.target.value)} autoFocus={!initialName} className={campo} />
             </div>
+            {parecidos.length > 0 && (
+              <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 space-y-2">
+                <p className="text-[10px] font-black uppercase tracking-widest text-amber-300">
+                  ¿Es alguno de estos?
+                </p>
+                <ul className="space-y-1.5">
+                  {parecidos.map((p) => (
+                    <li key={p.id}>
+                      <button
+                        type="button"
+                        onClick={() => elegir(p)}
+                        className="w-full min-h-11 text-left bg-black/30 rounded-lg px-3 py-2 border border-amber-500/20"
+                      >
+                        <span className="block text-xs font-bold truncate">{p.name}</span>
+                        <span className="block text-[10px] text-white/40 font-mono">
+                          {p.barcode || p.id}
+                          {escaneado && esCodigoGenerico(p.barcode || p.id) ? " · se le guarda el código escaneado" : ""}
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className={etiqueta}>{porPeso ? "Precio por kilo" : "Precio de venta"}</label>
@@ -353,7 +402,7 @@ export default function SinCoincidencia({
                 </div>
 
                 {escaneado &&
-                  (esAdmin ? (
+                  (esAdmin || esCodigoGenerico(elegido.barcode || elegido.id) ? (
                     <label className="flex items-start gap-3 rounded-xl border border-white/10 bg-white/5 p-3 text-xs text-white/70 leading-relaxed">
                       <input
                         type="checkbox"
@@ -362,8 +411,9 @@ export default function SinCoincidencia({
                         className="mt-0.5 w-4 h-4 accent-emerald-500"
                       />
                       <span>
-                        Dejarle el código escaneado <strong className="font-mono">{escaneado}</strong>.
-                        {!esInterno(elegido.barcode || elegido.id) && (
+                        Guardarle el código escaneado <strong className="font-mono">{escaneado}</strong>
+                        {esCodigoGenerico(elegido.barcode || elegido.id) ? " (reemplaza su código genérico)." : "."}
+                        {!esCodigoGenerico(elegido.barcode || elegido.id) && (
                           <> Reemplaza su código actual: los envases con el código anterior ya no van a coincidir.</>
                         )}
                       </span>

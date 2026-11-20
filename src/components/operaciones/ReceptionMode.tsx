@@ -48,7 +48,7 @@ export default function ReceptionMode() {
     recuperados, descartarAvisoRecuperados,
     isScanning, isSaving, error, success, totalItems,
   } = useQuickInventory(isTransfer ? "transfer" : "reception");
-  const { products: allProducts, upsertLocal } = useProductCatalog();
+  const { products: allProducts, upsertLocal, refresh: refrescarCatalogo } = useProductCatalog();
   const { showToast } = useToast();
 
   // ── Precio y costo de cada línea ──────────────────────────────────
@@ -220,6 +220,12 @@ export default function ReceptionMode() {
   };
 
   const handleMerge = (product: ProductUI, quantity: number) => {
+    // Si se quedó con el código escaneado, el catálogo local todavía tiene el
+    // genérico: se recarga para no ofrecer dos fichas del mismo producto.
+    if (!allProducts.some((p) => (p.barcode || p.id) === (product.barcode || product.id))) {
+      upsertLocal(product);
+      void refrescarCatalogo?.();
+    }
     addProduct(product, quantity);
     closeCreating();
     setQuery("");

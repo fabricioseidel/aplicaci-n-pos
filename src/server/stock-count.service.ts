@@ -254,6 +254,12 @@ export async function applyCount({
 
   if (payload.length === 0) return { ok: false, error: "Ningún ítem válido" };
 
+  // Otro teléfono pudo haberle puesto el código real a un producto mientras
+  // este tenía la lista armada con el genérico: se reubica en vez de perderlo.
+  const renombres = await codigosRenombrados(payload.map((i) => i.barcode));
+  for (const i of payload) i.barcode = renombres.get(i.barcode) ?? i.barcode;
+  for (const i of items ?? []) if (i?.barcode) i.barcode = renombres.get(String(i.barcode)) ?? i.barcode;
+
   const { data, error } = await supabaseServer.rpc("apply_stock_absolute", {
     p_items: payload,
     p_branch_id: branchId ?? null,
@@ -293,6 +299,56 @@ export async function applyCount({
     soloAnotado: Boolean(res.soloAnotado),
     sumados: Number(res.sumados ?? 0),
   };
+}
+
+/**
+ * Códigos que ya no existen porque se renombraron (código genérico → real),
+ * resueltos al código de ahora según `audit_logs`. Si algo falla, no mapea
+ * nada: el lote se aplica igual y lo desconocido se informa como siempre.
+ */
+export async function codigosRenombrados(codigos: string[]): Promise<Map<string, string>> {
+  const mapa = new Map<string, string>();
+  const unicos = [...new Set(codigos.filter(Boolean))];
+  if (unicos.length === 0) return mapa;
+  try {
+    const { data: existen, error } = await supabaseServer
+      .from("products")
+      .select("barcode")
+      .in("barcode", unicos);
+    if (error) return mapa;
+    const ok = new Set(((existen ?? []) as Array<{ barcode: string }>).map((p) => p.barcode));
+    let faltan = unicos.filter((c) => !ok.has(c));
+
+    // Hasta tres saltos por si se renombró más de una vez.
+    for (let salto = 0; salto < 3 && faltan.length > 0; salto++) {
+      const { data: logs, error: errLogs } = await supabaseServer
+        .from("audit_logs")
+        .select("details, created_at")
+        .eq("action", "products.rename_barcode")
+        .in("details->>antes", faltan)
+        .order("created_at", { ascending: true });
+      if (errLogs || !logs?.length) break;
+      const siguiente = new Map<string, string>();
+      for (const l of logs as Array<{ details: { antes?: string; despues?: string } | null }>) {
+        if (l.details?.antes && l.details?.despues) siguiente.set(l.details.antes, l.details.despues);
+      }
+      const pendientes: string[] = [];
+      for (const c of faltan) {
+        const nuevo = siguiente.get(c);
+        if (!nuevo) continue;
+        const origen = [...mapa.entries()].filter(([, v]) => v === c).map(([k]) => k);
+        for (const o of origen) mapa.set(o, nuevo);
+        if (!mapa.has(c)) mapa.set(c, nuevo);
+        pendientes.push(nuevo);
+      }
+      const { data: existen2 } = await supabaseServer.from("products").select("barcode").in("barcode", pendientes);
+      const ok2 = new Set(((existen2 ?? []) as Array<{ barcode: string }>).map((p) => p.barcode));
+      faltan = pendientes.filter((c) => !ok2.has(c));
+    }
+  } catch {
+    /* sin mapeo */
+  }
+  return mapa;
 }
 
 /**
