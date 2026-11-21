@@ -142,14 +142,21 @@ export async function POST(req: Request) {
      * de verdad dentro de él y moverla al turno actual descuadraría los dos.
      */
     let shiftId: string | null = null;
+    // La sede de la venta se resuelve una sola vez: el turno tiene que ser de
+    // ESA sede.
+    const ventaBranchId = await resolveBranchId(body.branchId);
 
     if (body.shiftId) {
       const { data: known } = await supabaseServer
         .from("cash_shifts")
-        .select("id")
+        .select("id, branch_id")
         .eq("id", body.shiftId)
         .maybeSingle();
-      shiftId = known?.id ?? null;
+      // Un teléfono puede traer guardado el turno de OTRA sede (de cuando el
+      // selector de sede todavía no había cargado): el 21/11 una venta de la
+      // Sucursal quedó en un turno abierto del minimarket y no apareció en su
+      // caja. Un turno de otra sede no se respeta: se usa el vigente de ésta.
+      shiftId = known && known.branch_id === ventaBranchId ? known.id : null;
     }
 
     if (!shiftId) {
@@ -164,7 +171,7 @@ export async function POST(req: Request) {
         .limit(1);
       // Sin sucursal (teléfono recién logueado, versión vieja) se usa la
       // sucursal por defecto, no "cualquier turno abierto".
-      query = query.eq("branch_id", await resolveBranchId(body.branchId));
+      query = query.eq("branch_id", ventaBranchId);
       const { data: shift } = await query.maybeSingle();
       shiftId = shift?.id ?? null;
     }
