@@ -7,6 +7,13 @@ import { useSync } from "@/contexts/SyncContext";
 import { apiWrite } from "@/lib/offline/apiWrite";
 import { readCachedProducts } from "@/lib/offline/db";
 import { parseRecepcion, recepcionKey } from "@/lib/inventario/recepcion";
+import { quienAtiende } from "@/services/products";
+
+/** Desde y hacia dónde va un traspaso. */
+export interface RutaTraspaso {
+  fromBranchId: string | null;
+  toBranchId: string | null;
+}
 
 export interface InventoryItem {
   product: ProductUI;
@@ -28,10 +35,11 @@ export type QuickInventoryMode = "reception" | "transfer";
  *
  * - modo "reception" (casa matriz): entra mercadería de un proveedor externo,
  *   vía `apply_reception` — suma stock de la nada.
- * - modo "transfer" (sucursal): la mercadería sale de la casa matriz, vía
- *   `apply_transfer` — resta allá y suma acá, no aparece stock nuevo.
+ * - modo "transfer": la mercadería pasa de una sede a otra (en cualquier
+ *   sentido), vía `apply_transfer` — resta en el origen y suma en el destino,
+ *   no aparece stock nuevo.
  */
-export function useQuickInventory(mode: QuickInventoryMode = "reception") {
+export function useQuickInventory(mode: QuickInventoryMode = "reception", ruta?: RutaTraspaso) {
   const { currentBranch } = useBranch();
   const { refreshPending } = useSync();
 
@@ -223,7 +231,9 @@ export function useQuickInventory(mode: QuickInventoryMode = "reception") {
                   barcode: i.product.barcode || i.product.id,
                   qty: i.quantity,
                 })),
-                toBranchId: currentBranch?.id ?? null,
+                fromBranchId: ruta?.fromBranchId ?? null,
+                toBranchId: ruta?.toBranchId ?? currentBranch?.id ?? null,
+                atiende: quienAtiende(),
                 notes: "TRANSFER",
               },
             }
@@ -261,7 +271,7 @@ export function useQuickInventory(mode: QuickInventoryMode = "reception") {
     } finally {
       setIsSaving(false);
     }
-  }, [items, currentBranch?.id, refreshPending, mode]);
+  }, [items, currentBranch?.id, refreshPending, mode, ruta?.fromBranchId, ruta?.toBranchId]);
 
   return {
     items,

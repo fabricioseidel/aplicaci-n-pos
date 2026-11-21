@@ -13,6 +13,11 @@ interface Resumen {
   contados: number;
   pendientes: number;
   movidosDesdeElConteo: number;
+  /**
+   * Conteo de una sucursal: el cierre sólo fija el stock de esa sede y nunca
+   * saca productos del catálogo (eso lo decide el minimarket).
+   */
+  esSucursal?: boolean;
 }
 
 const n = (x: number) => x.toLocaleString("es-CL");
@@ -80,7 +85,9 @@ export default function CierreConteo({
             Conteo total: poner en 0 lo no contado
           </span>
           <span className="block text-[11px] text-red-200/60 mt-0.5">
-            Solo si recorriste TODA la tienda. {n(p)} productos sin contar quedarían en 0 y fuera del catálogo.
+            {resumen.esSucursal
+              ? `Solo si recorriste TODA la sucursal. ${n(p)} productos con stock acá sin contar quedarían en 0 en esta sucursal.`
+              : `Solo si recorriste TODA la tienda. ${n(p)} productos sin contar quedarían en 0 y fuera del catálogo.`}
           </span>
         </button>
       ) : (
@@ -96,7 +103,9 @@ export default function CierreConteo({
             "Esto termina el inventario en TODOS los teléfonos. Para subir un lote usa «Guardar lote», no esto.",
             `${n(resumen.contados)} productos quedan con la cantidad contada` +
               (resumen.applyMode === "ON_CLOSE" ? ", menos lo vendido después de contarlos." : "."),
-            "Los contados en 0 salen del catálogo.",
+            resumen.esSucursal
+              ? "Solo cambia el stock de esta sucursal: el catálogo y el minimarket no se tocan."
+              : "Los contados en 0 salen del catálogo.",
             `Los ${n(p)} que no escaneaste no cambian.`,
           ]}
           acciones={[
@@ -168,14 +177,25 @@ function CierreTotal({
         <div className="flex items-start gap-3">
           <ExclamationTriangleIcon className="w-7 h-7 text-red-400 shrink-0" />
           <div className="flex-1">
-            <h2 className="text-lg font-black leading-snug">Conteo total de la tienda</h2>
+            <h2 className="text-lg font-black leading-snug">
+              {resumen.esSucursal ? "Conteo total de la sucursal" : "Conteo total de la tienda"}
+            </h2>
             <p className="text-sm text-white/60 mt-1">
               Los <strong className="text-white">{n(resumen.contados)}</strong> contados quedan con lo registrado
               {resumen.applyMode === "ON_CLOSE" ? " (menos lo vendido después)" : ""}.{" "}
-              <strong className="text-red-300">
-                Los {n(p)} productos que no escaneaste quedan en 0 y salen del catálogo
-              </strong>
-              : no se van a poder vender hasta que alguien los vuelva a contar o los reactive.
+              {resumen.esSucursal ? (
+                <strong className="text-red-300">
+                  Los {n(p)} productos con stock en esta sucursal que no escaneaste quedan en 0 acá. El
+                  minimarket y el catálogo no cambian.
+                </strong>
+              ) : (
+                <>
+                  <strong className="text-red-300">
+                    Los {n(p)} productos que no escaneaste quedan en 0 y salen del catálogo
+                  </strong>
+                  : no se van a poder vender hasta que alguien los vuelva a contar o los reactive.
+                </>
+              )}
             </p>
           </div>
           <button onClick={onClose} aria-label="Cerrar" className="w-12 h-12 -mr-2 -mt-2 flex items-center justify-center text-white/50">

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import type { ProductUI } from "@/types";
 import { cacheProduct, cacheProducts, readCachedProducts } from "@/lib/offline/db";
+import { useBranchOpcional } from "@/contexts/BranchContext";
 
 interface CatalogState {
   products: ProductUI[];
@@ -32,10 +33,14 @@ export function useProductCatalog(): CatalogState {
   const [fromCache, setFromCache] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // El stock viene por sede: el de la sucursal no es el del minimarket.
+  const branchId = useBranchOpcional()?.currentBranch?.id ?? null;
+
   const refresh = useCallback(async () => {
     setError(null);
     try {
-      const res = await fetch("/api/products", { cache: "no-store" });
+      const url = branchId ? `/api/products?branchId=${encodeURIComponent(branchId)}` : "/api/products";
+      const res = await fetch(url, { cache: "no-store" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = (await res.json()) as { items?: ProductUI[] };
       const items = data.items ?? [];
@@ -56,7 +61,7 @@ export function useProductCatalog(): CatalogState {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [branchId]);
 
   useEffect(() => {
     let cancelled = false;

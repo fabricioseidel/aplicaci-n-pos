@@ -122,6 +122,11 @@ export function BranchProvider({ children }: { children: ReactNode }) {
   );
 }
 
+/** Como `useBranch`, pero sin proveedor devuelve null en vez de fallar. */
+export function useBranchOpcional(): BranchContextType | null {
+  return useContext(BranchContext) ?? null;
+}
+
 export function useBranch() {
   const ctx = useContext(BranchContext);
   if (!ctx) throw new Error("useBranch must be used within BranchProvider");

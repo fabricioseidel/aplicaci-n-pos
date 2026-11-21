@@ -1,7 +1,13 @@
 import { NextResponse } from "next/server";
 import { requireApiAdminOrSeller } from "@/lib/api-auth";
 import { errorResponse } from "@/lib/api-response";
-import { closeCount, countProgress } from "@/server/stock-count.service";
+import {
+  activosContados,
+  closeCount,
+  countProgress,
+  restaurarCatalogo,
+  sedeDeSesion,
+} from "@/server/stock-count.service";
 import { parametrosCierre, type ModoCierre } from "@/lib/inventario/conteo";
 
 export const dynamic = "force-dynamic";
@@ -74,11 +80,23 @@ export async function POST(req: Request) {
       );
     }
 
+    // En una sucursal el cierre sólo fija SU stock: no saca productos del
+    // catálogo (eso lo decide el minimarket, que es lo que vende la web).
+    const sede = await sedeDeSesion(body.sessionId);
+    const enSucursal = sede !== null && !sede.esMatriz;
+    const activosAntes = enSucursal ? await activosContados(body.sessionId) : null;
+
     const result = await closeCount({
       sessionId: body.sessionId,
       closedBy: auth.session.user?.name ?? auth.session.user?.email ?? auth.userId ?? null,
       ...parametrosCierre(modo),
+      ...(enSucursal ? { deactivateUncounted: false } : {}),
     });
+
+    if (result.ok && enSucursal && sede) {
+      await restaurarCatalogo(body.sessionId, sede.branchId, activosAntes ?? new Set());
+      result.desactivados = 0;
+    }
 
     if (!result.ok) return NextResponse.json({ error: result.error }, { status: 400 });
 

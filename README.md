@@ -178,6 +178,25 @@ lo escaneado se encola en el outbox. Abrir y cerrar el conteo sí necesitan red.
   como ajuste absoluto sobre la sucursal (`MANUAL_ADJUSTMENT`), que es lo que
   antes se descartaba en silencio.
 
+## Sedes: minimarket y sucursal
+
+El minimarket es la sede por defecto (`is_default`) y su stock es el que vende
+la tienda web (`products.stock`). La sucursal vende, tiene su caja y su propio
+stock en `branch_stock`. El selector de sede arriba a la derecha cambia todo el
+mostrador: venta, caja, inventario y el stock que se ve.
+
+- **Stock en pantalla:** el catálogo pide `/api/products?branchId=…`, así que
+  en la sucursal se ve el stock de la sucursal, no el del minimarket.
+- **Inventario de la sucursal:** el conteo y su cierre solo fijan el stock de
+  esa sede. Nunca sacan productos del catálogo, porque eso lo decide el
+  minimarket. "Sin contar" son los productos que la sucursal tiene con stock.
+- **Traspaso entre sedes** (Recepción → *Traspaso entre sedes*): se elige
+  origen y destino, en cualquier sentido, se escanea y se confirma. Resta en
+  una sede y suma en la otra (`apply_transfer`); no crea stock. Si el origen
+  tiene registrado menos de lo que se mueve, queda en 0 y la pantalla lo avisa.
+  Cada traspaso queda en `audit_logs` (`inventory.transfer`) con quién, desde,
+  hacia y qué productos, y se ve en "Últimos traspasos".
+
 ## Venta por peso
 
 Un producto con `by_weight = true` interpreta su `sale_price` como **precio por

@@ -4,8 +4,9 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   TrashIcon, PlusIcon, MinusIcon, ArchiveBoxIcon,
   CheckCircleIcon, ExclamationCircleIcon, BoltIcon,
-  MagnifyingGlassIcon, XMarkIcon, PlusCircleIcon, TagIcon, SparklesIcon,
+  MagnifyingGlassIcon, XMarkIcon, PlusCircleIcon, TagIcon, SparklesIcon, ArrowsRightLeftIcon,
 } from "@heroicons/react/24/outline";
+import HistorialTraspasos from "@/components/operaciones/inventario/HistorialTraspasos";
 import { useQuickInventory } from "@/hooks/useQuickInventory";
 import { useProductCatalog } from "@/hooks/useProductCatalog";
 import { useBranch } from "@/contexts/BranchContext";
@@ -23,11 +24,12 @@ import { ProductConflictError } from "@/services/products";
 import { revisarPrecio } from "@/lib/products/edicion";
 import { costoBruto, sugerenciaDePrecio, type InfoRecepcion } from "@/lib/inventario/recepcion";
 import { formatoMargen } from "@/lib/inventario/precios";
-import type { ProductUI } from "@/types";
+import type { Branch, ProductUI } from "@/types";
 
 const pesos = (n: number) => `$${Math.round(n).toLocaleString("es-CL")}`;
 
 const SEARCH_RESULTS_LIMIT = 8;
+const SIN_SEDES: Branch[] = [];
 
 /**
  * Suma stock a un producto: en la casa matriz es Recepción de un proveedor
@@ -40,14 +42,72 @@ const SEARCH_RESULTS_LIMIT = 8;
  * escaneo, o desde cero cuando la búsqueda por nombre no encuentra nada.
  */
 export default function ReceptionMode() {
-  const { currentBranch } = useBranch();
-  const isTransfer = Boolean(currentBranch && !currentBranch.is_default);
+  const sedes = useBranch();
+  const currentBranch = sedes.currentBranch;
+  // Constante fuera del render: un `[]` nuevo en cada render re-dispararía el
+  // efecto de abajo sin fin.
+  const branches = sedes.branches ?? SIN_SEDES;
+  const hayVariasSedes = branches.length > 1;
+
+  // Recepción de un proveedor o traspaso entre sedes. En la sucursal se abre
+  // en traspaso (es lo habitual allá); en el minimarket, en recepción.
+  const [vista, setVista] = useState<"recepcion" | "traspaso">("recepcion");
+  // Por defecto: en el minimarket se manda a la sucursal; en la sucursal se
+  // trae del minimarket. Se puede invertir con el botón ⇄.
+  const [ruta, setRuta] = useState<{ desde: string | null; hacia: string | null }>({ desde: null, hacia: null });
+  const actualId = currentBranch?.id ?? null;
+  const actualEsMatriz = currentBranch?.is_default !== false;
+  const idsSedes = branches.map((b) => `${b.id}:${b.is_default ? 1 : 0}`).join(",");
+  useEffect(() => {
+    // Depende de ids (texto), no de objetos: un objeto nuevo con los mismos
+    // datos no tiene por qué reiniciar lo que se eligió.
+    const lista = idsSedes ? idsSedes.split(",").map((x) => x.split(":")) : [];
+    const matriz = lista.find(([, d]) => d === "1")?.[0] ?? null;
+    setVista(actualId && !actualEsMatriz ? "traspaso" : "recepcion");
+    if (!actualId) return;
+    if (actualEsMatriz) {
+      setRuta({ desde: actualId, hacia: lista.find(([id]) => id !== actualId)?.[0] ?? null });
+    } else {
+      setRuta({ desde: matriz, hacia: actualId });
+    }
+  }, [actualId, actualEsMatriz, idsSedes]);
+
+  const isTransfer = hayVariasSedes && vista === "traspaso";
+  const nombreSede = (id: string | null) => branches.find((b) => b.id === id)?.name ?? "—";
+  const rutaValida = !!ruta.desde && !!ruta.hacia && ruta.desde !== ruta.hacia;
 
   const {
     items, addItem, addProduct, updateQuantity, updateLine, confirm, clear,
     recuperados, descartarAvisoRecuperados,
     isScanning, isSaving, error, success, totalItems,
-  } = useQuickInventory(isTransfer ? "transfer" : "reception");
+  } = useQuickInventory(
+    isTransfer ? "transfer" : "reception",
+    isTransfer ? { fromBranchId: ruta.desde, toBranchId: ruta.hacia } : undefined
+  );
+
+  // Cuánto tiene registrado el origen de cada producto, para avisar si se
+  // mueve más de lo que el sistema cree que hay allá.
+  const [stockOrigen, setStockOrigen] = useState<Record<string, number> | null>(null);
+  useEffect(() => {
+    if (!isTransfer || !ruta.desde) {
+      setStockOrigen(null);
+      return;
+    }
+    let cancelado = false;
+    void (async () => {
+      try {
+        const res = await fetch(`/api/branch-stock?branchId=${encodeURIComponent(ruta.desde!)}`, { cache: "no-store" });
+        if (!res.ok) return;
+        const data = (await res.json()) as { stock?: Record<string, number> };
+        if (!cancelado) setStockOrigen(data.stock ?? {});
+      } catch {
+        /* sin red: sin aviso de stock en origen */
+      }
+    })();
+    return () => {
+      cancelado = true;
+    };
+  }, [isTransfer, ruta.desde, success]);
   const { products: allProducts, upsertLocal, refresh: refrescarCatalogo } = useProductCatalog();
   const { showToast } = useToast();
 
@@ -242,8 +302,8 @@ export default function ReceptionMode() {
             </h1>
             <p className="text-sm text-white/40 font-medium italic">
               {isTransfer
-                ? `Resta stock de la matriz y suma en ${currentBranch?.name ?? "esta sucursal"}.`
-                : "Suma stock de los nuevos ingresos."}
+                ? `Resta en ${nombreSede(ruta.desde)} y suma en ${nombreSede(ruta.hacia)}.`
+                : `Suma stock de los nuevos ingresos en ${currentBranch?.name ?? "esta sede"}.`}
             </p>
           </div>
           <div className="text-right">
@@ -256,6 +316,71 @@ export default function ReceptionMode() {
       </div>
 
       <div className="flex-1 p-4 sm:p-6 space-y-5 flex flex-col max-w-3xl mx-auto w-full">
+        {hayVariasSedes && (
+          <div className="grid grid-cols-2 gap-1 p-1 rounded-2xl bg-white/5 border border-white/10 shrink-0">
+            {(
+              [
+                ["recepcion", "Recepción proveedor"],
+                ["traspaso", "Traspaso entre sedes"],
+              ] as const
+            ).map(([id, texto]) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => setVista(id)}
+                aria-pressed={vista === id}
+                className={`min-h-11 rounded-xl text-[10px] font-black uppercase tracking-widest ${
+                  vista === id ? "bg-emerald-500 text-black" : "text-white/50"
+                }`}
+              >
+                {texto}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {isTransfer && (
+          <div className="rounded-2xl border border-white/10 bg-white/5 p-3 space-y-2 shrink-0">
+            <div className="flex items-end gap-2">
+              <label className="flex-1 min-w-0">
+                <span className="block text-[10px] font-black uppercase tracking-widest text-white/40 mb-1">Sale de</span>
+                <select
+                  value={ruta.desde ?? ""}
+                  onChange={(e) => setRuta((r) => ({ ...r, desde: e.target.value || null }))}
+                  className="w-full min-h-11 bg-black border border-white/10 rounded-xl px-3 text-sm text-white outline-none focus:border-emerald-500"
+                >
+                  {branches.map((b) => (
+                    <option key={b.id} value={b.id}>{b.name}</option>
+                  ))}
+                </select>
+              </label>
+              <button
+                type="button"
+                onClick={() => setRuta((r) => ({ desde: r.hacia, hacia: r.desde }))}
+                aria-label="Invertir origen y destino"
+                className="min-h-11 min-w-11 rounded-xl border border-white/10 bg-white/5 flex items-center justify-center text-white/70"
+              >
+                <ArrowsRightLeftIcon className="w-5 h-5" />
+              </button>
+              <label className="flex-1 min-w-0">
+                <span className="block text-[10px] font-black uppercase tracking-widest text-white/40 mb-1">Llega a</span>
+                <select
+                  value={ruta.hacia ?? ""}
+                  onChange={(e) => setRuta((r) => ({ ...r, hacia: e.target.value || null }))}
+                  className="w-full min-h-11 bg-black border border-white/10 rounded-xl px-3 text-sm text-white outline-none focus:border-emerald-500"
+                >
+                  {branches.map((b) => (
+                    <option key={b.id} value={b.id}>{b.name}</option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            {!rutaValida && (
+              <p className="text-xs text-amber-300">El origen y el destino tienen que ser sedes distintas.</p>
+            )}
+          </div>
+        )}
+
         {success && (
           <div className="bg-emerald-500/10 border border-emerald-500/50 p-4 rounded-2xl flex items-center gap-4 shrink-0">
             <div className="p-2.5 bg-emerald-500 rounded-2xl text-black shrink-0">
@@ -447,9 +572,17 @@ export default function ReceptionMode() {
                           {item.product.name}
                         </h3>
                         <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest mt-1 truncate">
-                          {key} • STOCK: {item.product.stock}
+                          {key} •{" "}
+                          {isTransfer && stockOrigen
+                            ? `EN ${nombreSede(ruta.desde)}: ${stockOrigen[key] ?? 0}`
+                            : `STOCK: ${item.product.stock}`}
                           {item.product.byWeight ? " kg" : ""}
                         </p>
+                        {isTransfer && stockOrigen && item.quantity > (stockOrigen[key] ?? 0) && (
+                          <p className="text-[11px] text-amber-300 mt-1">
+                            El sistema dice que en {nombreSede(ruta.desde)} hay {stockOrigen[key] ?? 0}: quedará en 0.
+                          </p>
+                        )}
                         <p className="text-sm mt-1 tabular-nums">
                           {precioActual > 0 ? (
                             <span className="font-black text-white">Precio {pesos(precioActual)}</span>
@@ -551,11 +684,17 @@ export default function ReceptionMode() {
         </div>
       </div>
 
+      {isTransfer && (
+        <div className="px-4 sm:px-6 pb-2 max-w-3xl mx-auto w-full">
+          <HistorialTraspasos branchId={currentBranch?.id ?? null} refrescar={success} />
+        </div>
+      )}
+
       <div className="sticky bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-[#0a0a0a] via-[#0a0a0a]/90 to-transparent pt-10 z-40 shrink-0">
         <div className="max-w-2xl mx-auto">
           <button
             onClick={confirm}
-            disabled={items.length === 0 || isSaving}
+            disabled={items.length === 0 || isSaving || (isTransfer && !rutaValida)}
             className={`w-full h-16 rounded-3xl flex items-center justify-center gap-3 text-sm font-black uppercase tracking-widest shadow-2xl transition-all ${
               isSaving ? "bg-white/10 text-white/50" :
               items.length === 0 ? "bg-white/5 text-white/20" :
