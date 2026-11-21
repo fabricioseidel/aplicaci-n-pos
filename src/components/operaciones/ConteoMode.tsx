@@ -1266,7 +1266,7 @@ export default function ConteoMode() {
       {/* Cierre: por defecto aplica solo lo escaneado (conteo de góndola). */}
       {sesionAbierta && (
         <CierreConteo
-          resumen={sesionAbierta}
+          resumen={{ ...sesionAbierta, esSucursal: currentBranch?.is_default === false }}
           esAdmin={esAdmin}
           hayLineasSinGuardar={lineas.length > 0}
           cerrando={cerrando}

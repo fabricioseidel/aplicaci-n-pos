@@ -1,4 +1,5 @@
 import { supabaseServer } from "@/lib/supabase-server";
+import { getDefaultBranch } from "@/server/branches.service";
 
 /**
  * Conteo físico de inventario (toma de inventario).
@@ -92,6 +93,49 @@ export interface CountProgress {
 }
 
 type Fallo = { ok: false; error: string };
+
+/**
+ * Sede del conteo y si es la matriz. En una sucursal el conteo NO decide qué
+ * productos están en el catálogo (eso es del minimarket, que es lo que vende
+ * la web): sólo fija el stock de esa sucursal.
+ */
+export async function sedeDeSesion(
+  sessionId: string
+): Promise<{ branchId: string; esMatriz: boolean } | null> {
+  const { data } = await supabaseServer
+    .from("stock_count_sessions")
+    .select("branch_id")
+    .eq("id", sessionId)
+    .maybeSingle();
+  const branchId = (data as { branch_id?: string } | null)?.branch_id;
+  if (!branchId) return null;
+  const matriz = await getDefaultBranch().catch(() => null);
+  return { branchId, esMatriz: !matriz || matriz.id === branchId };
+}
+
+/**
+ * En una sucursal, "sin contar" son los productos que ESA sucursal tiene con
+ * stock y todavía no se escanearon: los únicos que un conteo total pondría en
+ * 0. Contar el catálogo entero no tiene sentido allá.
+ */
+async function pendientesDeSucursal(
+  sessionId: string,
+  branchId: string
+): Promise<Array<{ barcode: string; stock: number }>> {
+  const [filas, contados] = await Promise.all([
+    supabaseServer
+      .from("branch_stock")
+      .select("product_barcode, stock")
+      .eq("branch_id", branchId)
+      .neq("stock", 0)
+      .limit(50000),
+    supabaseServer.from("stock_count_entries").select("product_barcode").eq("session_id", sessionId).limit(50000),
+  ]);
+  const ya = new Set(((contados.data ?? []) as Array<{ product_barcode: string }>).map((e) => e.product_barcode));
+  return ((filas.data ?? []) as Array<{ product_barcode: string; stock: number | string }>)
+    .filter((f) => !ya.has(f.product_barcode))
+    .map((f) => ({ barcode: f.product_barcode, stock: Number(f.stock) }));
+}
 
 /** "YYYY-MM-DD" de una fecha que existe. */
 export function esFecha(v: unknown): v is string {
@@ -218,7 +262,15 @@ export async function countProgress(
   const startMode: CountStartMode =
     (fila as { start_mode?: string } | null)?.start_mode === "ZERO" ? "ZERO" : "KEEP";
 
-  return { ok: true, progress: { ...(res as unknown as CountProgress), startMode } };
+  const progress = { ...(res as unknown as CountProgress), startMode };
+
+  const sede = await sedeDeSesion(sessionId).catch(() => null);
+  if (sede && !sede.esMatriz) {
+    const faltan = await pendientesDeSucursal(sessionId, sede.branchId).catch(() => null);
+    if (faltan) progress.pendientes = faltan.length;
+  }
+
+  return { ok: true, progress };
 }
 
 /**
@@ -641,6 +693,29 @@ export async function uncountedProducts(
 ): Promise<
   { ok: true; total: number; productos: Array<{ barcode: string; name: string; stock: number }> } | Fallo
 > {
+  const sede = await sedeDeSesion(sessionId).catch(() => null);
+  if (sede && !sede.esMatriz) {
+    const faltan = await pendientesDeSucursal(sessionId, sede.branchId);
+    const nombres = new Map<string, string>();
+    const codigos = faltan.map((f) => f.barcode);
+    for (let i = 0; i < codigos.length; i += 200) {
+      const { data } = await supabaseServer
+        .from("products")
+        .select("barcode, name")
+        .in("barcode", codigos.slice(i, i + 200));
+      for (const n of (data ?? []) as Array<{ barcode: string; name: string | null }>) {
+        nombres.set(n.barcode, n.name ?? "(sin nombre)");
+      }
+    }
+    return {
+      ok: true,
+      total: faltan.length,
+      productos: faltan
+        .map((f) => ({ ...f, name: nombres.get(f.barcode) ?? "(sin nombre)" }))
+        .slice(0, limite),
+    };
+  }
+
   const [entradas, productos] = await Promise.all([
     supabaseServer.from("stock_count_entries").select("product_barcode").eq("session_id", sessionId).limit(50000),
     supabaseServer
@@ -662,4 +737,64 @@ export async function uncountedProducts(
   // Primero los que tienen stock: son los que el cierre realmente cambia.
   faltan.sort((a, b) => Number(b.stock > 0) - Number(a.stock > 0));
   return { ok: true, total: faltan.length, productos: faltan.slice(0, limite) };
+}
+
+/** Productos contados en la sesión que hoy están activos en el catálogo. */
+export async function activosContados(sessionId: string): Promise<Set<string>> {
+  const { data: entradas } = await supabaseServer
+    .from("stock_count_entries")
+    .select("product_barcode")
+    .eq("session_id", sessionId)
+    .limit(50000);
+  const codigos = ((entradas ?? []) as Array<{ product_barcode: string }>).map((e) => e.product_barcode);
+  const activos = new Set<string>();
+  for (let i = 0; i < codigos.length; i += 200) {
+    const { data } = await supabaseServer
+      .from("products")
+      .select("barcode, is_active")
+      .in("barcode", codigos.slice(i, i + 200));
+    for (const p of (data ?? []) as Array<{ barcode: string; is_active: boolean | null }>) {
+      if (p.is_active !== false) activos.add(p.barcode);
+    }
+  }
+  return activos;
+}
+
+/**
+ * Después de cerrar el conteo de una SUCURSAL. `close_stock_count` deja
+ * activo/inactivo cada producto contado según el stock de la sede del conteo:
+ * contar 0 en la sucursal sacaba el producto del catálogo de todas las sedes
+ * (y de la web) aunque el minimarket lo tuviera. Acá se deja como estaba, y
+ * se activa lo que la sucursal sí tiene, para que se pueda vender allá.
+ */
+export async function restaurarCatalogo(
+  sessionId: string,
+  branchId: string,
+  activosAntes: Set<string>
+): Promise<void> {
+  const { data: entradas } = await supabaseServer
+    .from("stock_count_entries")
+    .select("product_barcode")
+    .eq("session_id", sessionId)
+    .limit(50000);
+  const codigos = ((entradas ?? []) as Array<{ product_barcode: string }>).map((e) => e.product_barcode);
+  const stock = new Map<string, number>();
+  for (let i = 0; i < codigos.length; i += 200) {
+    const { data } = await supabaseServer
+      .from("branch_stock")
+      .select("product_barcode, stock")
+      .eq("branch_id", branchId)
+      .in("product_barcode", codigos.slice(i, i + 200));
+    for (const f of (data ?? []) as Array<{ product_barcode: string; stock: number | string }>) {
+      stock.set(f.product_barcode, Number(f.stock));
+    }
+  }
+  const activar = codigos.filter((c) => activosAntes.has(c) || (stock.get(c) ?? 0) > 0);
+  for (let i = 0; i < activar.length; i += 200) {
+    const { error } = await supabaseServer
+      .from("products")
+      .update({ is_active: true })
+      .in("barcode", activar.slice(i, i + 200));
+    if (error) console.error("[conteo] restaurar catálogo:", error.message);
+  }
 }

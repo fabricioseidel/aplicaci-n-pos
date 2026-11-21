@@ -5,12 +5,14 @@ import { errorResponse, successResponse } from "@/lib/api-response";
 import { mapSupaToUI } from "@/services/products";
 import { applyCount, type CountItem } from "@/server/stock-count.service";
 import type { SupaProduct } from "@/types";
+import { stockDeSede } from "@/server/transfer.service";
 import { codigosConCostoDeProveedor, conColumnasDeProducto, filaParaRol } from "@/server/productos.service";
 
 export const dynamic = "force-dynamic";
 
 /**
  * GET /api/products — catálogo completo para el POS.
+ * GET /api/products?branchId=… — igual, con el stock de esa sede.
  * GET /api/products?estado=inactivos — sólo los desactivados (filtro
  * "Inactivos" de Productos, para poder reactivarlos: antes desaparecían).
  *
@@ -30,7 +32,9 @@ export async function GET(req: Request) {
   if (!auth.ok) return auth.response;
 
   try {
-    const inactivos = new URL(req.url).searchParams.get("estado") === "inactivos";
+    const params = new URL(req.url).searchParams;
+    const inactivos = params.get("estado") === "inactivos";
+    const branchId = (params.get("branchId") ?? "").trim();
 
     const { data, error } = await conColumnasDeProducto((cols) => {
       const q = supabaseServer.from("products").select(cols);
@@ -46,8 +50,13 @@ export async function GET(req: Request) {
 
     const filas = (data ?? []) as unknown as Array<SupaProduct & Record<string, unknown>>;
     const conProveedor = auth.role === "ADMIN" ? await codigosConCostoDeProveedor() : null;
+    // Con dos sedes, el stock que importa en el mostrador es el de ESTA sede:
+    // `products.stock` es el de la tienda web (minimarket), no el de la
+    // sucursal. Lo que la sede no tiene registrado es 0.
+    const deSede = branchId ? await stockDeSede(branchId).catch(() => null) : null;
     const items = filas.map((f) => {
-      const p = mapSupaToUI(filaParaRol(f, auth.role) as SupaProduct);
+      const fila = deSede ? { ...f, stock: deSede.get(String(f.barcode)) ?? 0 } : f;
+      const p = mapSupaToUI(filaParaRol(fila, auth.role) as SupaProduct);
       return conProveedor ? { ...p, costoProveedor: conProveedor.has(String(f.barcode)) } : p;
     });
     return NextResponse.json({ items });

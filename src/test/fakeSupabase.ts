@@ -22,6 +22,7 @@ class Consulta implements PromiseLike<{ data: unknown; error: unknown }> {
   private valores: Fila | Fila[] | null = null;
   private unico = false;
   private limite: number | null = null;
+  desde?: number;
   private devolver = false;
 
   constructor(private db: FakeDb, private tabla: string) {}
@@ -57,6 +58,15 @@ class Consulta implements PromiseLike<{ data: unknown; error: unknown }> {
   }
   in(k: string, vs: unknown[]) {
     this.filtros.push((f) => vs.includes(f[k]));
+    return this;
+  }
+  neq(k: string, v: unknown) {
+    this.filtros.push((f) => (f[k] ?? null) != v);
+    return this;
+  }
+  range(desde: number, hasta: number) {
+    this.desde = desde;
+    this.limite = hasta - desde + 1;
     return this;
   }
   not(k: string, _op: string, v: unknown) {
@@ -111,7 +121,8 @@ class Consulta implements PromiseLike<{ data: unknown; error: unknown }> {
       for (const f of coinciden) Object.assign(f, this.valores);
       return { data: this.devolver ? coinciden.map((f) => ({ ...f })) : null, error: null };
     }
-    const lista = this.limite ? coinciden.slice(0, this.limite) : coinciden;
+    const inicio = this.desde ?? 0;
+    const lista = this.limite ? coinciden.slice(inicio, inicio + this.limite) : coinciden.slice(inicio);
     if (this.unico) return { data: lista[0] ? { ...lista[0] } : null, error: null };
     return { data: lista.map((f) => ({ ...f })), error: null };
   }
