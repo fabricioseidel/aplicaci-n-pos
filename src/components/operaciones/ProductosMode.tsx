@@ -195,6 +195,8 @@ export default function ProductosMode() {
       <InventarioLista
         productos={products}
         sede={currentBranch?.name ?? "Sede"}
+        branchId={branchId}
+        onAjustado={(p, stock) => upsertLocal({ ...p, stock })}
         onVolver={() => setVista({ tipo: "lista" })}
       />
     );

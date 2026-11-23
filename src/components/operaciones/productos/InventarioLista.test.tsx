@@ -1,10 +1,17 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+
+const ajustarStock = vi.fn();
+vi.mock("@/services/products", () => ({ ajustarStock: (...a: unknown[]) => ajustarStock(...a) }));
+
 import InventarioLista from "./InventarioLista";
 import type { ProductUI } from "@/types";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.clearAllMocks();
+});
 
 const p = (id: string, name: string, stock: number, extra: Partial<ProductUI> = {}) =>
   ({ id, barcode: id, name, stock, price: 1000, ...extra }) as ProductUI;
@@ -34,5 +41,30 @@ describe("InventarioLista", () => {
     fireEvent.change(screen.getByLabelText("Buscar producto"), { target: { value: "atun" } });
     expect(screen.queryByText("Coca-Cola Zero 1.5")).toBeNull();
     expect(screen.getByText("Atún Molinova")).toBeTruthy();
+  });
+
+  it("tocar un producto permite corregir su stock con motivo, en la sede elegida", async () => {
+    ajustarStock.mockResolvedValue({ ok: true, stock: 6 });
+    const onAjustado = vi.fn();
+    render(
+      <InventarioLista productos={productos} sede="Sucursal" branchId="b-suc" onAjustado={onAjustado} onVolver={() => {}} />
+    );
+
+    fireEvent.click(screen.getByLabelText("Corregir stock de Coca-Cola Zero 1.5"));
+    await screen.findByText("¿Cuántas hay ahora?");
+    fireEvent.change(document.querySelector('input[inputmode="numeric"]') as HTMLInputElement, { target: { value: "6" } });
+    fireEvent.click(screen.getByText("Corrección"));
+    fireEvent.click(screen.getByText("Ajustar"));
+
+    await waitFor(() => expect(ajustarStock).toHaveBeenCalled());
+    expect(ajustarStock.mock.calls[0][0]).toMatchObject({
+      barcode: "1",
+      stock: 6,
+      stockVisto: 8,
+      motivo: "Corrección",
+      branchId: "b-suc",
+    });
+    await waitFor(() => expect(onAjustado).toHaveBeenCalledWith(expect.objectContaining({ id: "1" }), 6));
+    expect(await screen.findByText(/Coca-Cola Zero 1.5: ahora 6/)).toBeTruthy();
   });
 });
