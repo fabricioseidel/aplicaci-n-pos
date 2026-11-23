@@ -1,0 +1,696 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<!--
+  Guía de uso del POS. Se abre desde el botón "?" de la barra de arriba
+  (componente AyudaGuia), dentro de la app, en la sección de la pestaña
+  donde se está. Las capturas están en public/guia/img. Para actualizarla,
+  editar este archivo y reemplazar las capturas que cambien.
+-->
+<title>Manual del mostrador Olivo</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@75..100,500..900&family=Inter:wght@400;500;600;700&display=swap">
+<style>
+/* Layout: manual de mostrador. Columna de lectura a la izquierda, pantalla real del POS a la derecha;
+   en el teléfono se apilan. Barra de pestañas fija arriba, igual que en la app. */
+:root {
+  --bg: #f4f6f1;
+  --surface: #ffffff;
+  --ink: #18201a;
+  --muted: #5a6659;
+  --line: #dde3d6;
+  --accent: #3e6a26;
+  --accent-ink: #ffffff;
+  --accent-soft: #e6efdb;
+  --warn: #9a4a06;
+  --warn-soft: #fbeedd;
+  --frame: #121612;
+  --shadow: 0 18px 40px -22px rgba(24, 40, 20, .45);
+  --display: "Archivo", "Arial Narrow", "Helvetica Neue", Arial, sans-serif;
+  --text: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f130f; --surface: #171d17; --ink: #e9eee6; --muted: #a2ad9e; --line: #283127;
+    --accent: #a3cc72; --accent-ink: #10150c; --accent-soft: #1f2b18; --warn: #f3b46d; --warn-soft: #2b2016;
+    --frame: #000000; --shadow: 0 18px 40px -22px rgba(0, 0, 0, .8); color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f130f; --surface: #171d17; --ink: #e9eee6; --muted: #a2ad9e; --line: #283127;
+  --accent: #a3cc72; --accent-ink: #10150c; --accent-soft: #1f2b18; --warn: #f3b46d; --warn-soft: #2b2016;
+  --frame: #000000; --shadow: 0 18px 40px -22px rgba(0, 0, 0, .8); color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--bg); color: var(--ink);
+  font-family: var(--text); font-size: 16px; line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 10; background: var(--surface); }
+a { color: var(--accent); }
+.wrap {
+  max-width: 1080px; margin: 0 auto;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+
+/* ── Barra de secciones (como la barra de pestañas de la app) ── */
+.tabs {
+  position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5;
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  backdrop-filter: blur(8px); border-bottom: 1px solid var(--line);
+}
+.tabs nav { display: flex; gap: 2px; overflow-x: auto; scrollbar-width: none; padding-block: 6px; }
+.tabs nav::-webkit-scrollbar { display: none; }
+.tabs a {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 7px; min-height: 44px; padding: 0 12px;
+  border-radius: 10px; text-decoration: none; color: var(--muted);
+  font-family: var(--display); font-weight: 800; font-size: 13px; letter-spacing: .06em; text-transform: uppercase;
+}
+.tabs a svg { width: 18px; height: 18px; flex: none; }
+.tabs a[aria-current="true"] { color: var(--accent-ink); background: var(--accent); }
+.tabs a:focus-visible, button:focus-visible, summary:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+
+/* ── Portada ── */
+.hero { padding-block: 56px 32px; display: grid; gap: 28px; }
+.eyebrow { font-family: var(--display); font-weight: 800; font-size: 13px; letter-spacing: .14em; text-transform: uppercase; color: var(--accent); }
+h1 {
+  font-family: var(--display); font-weight: 900; font-stretch: 78%; text-transform: uppercase;
+  font-size: clamp(2.6rem, 8vw, 4.6rem); line-height: .92; letter-spacing: -.01em; margin: 6px 0 0; text-wrap: balance;
+}
+.lede { font-size: 1.12rem; color: var(--muted); max-width: 58ch; margin: 0; }
+.mapa { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; }
+.mapa a {
+  display: grid; gap: 6px; align-content: start; padding: 16px 14px; border-radius: 14px; text-decoration: none; color: var(--ink);
+  background: var(--surface); border: 1px solid var(--line); min-width: 0;
+}
+.mapa a:hover { border-color: var(--accent); }
+.mapa svg { width: 26px; height: 26px; color: var(--accent); }
+.mapa b { font-family: var(--display); font-weight: 900; text-transform: uppercase; letter-spacing: .05em; font-size: 15px; }
+.mapa span { font-size: 14px; color: var(--muted); line-height: 1.4; }
+
+/* ── Día típico ── */
+.dia { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0; border: 1px solid var(--line); border-radius: 16px; overflow: hidden; background: var(--surface); }
+.dia div { padding: 16px; border-right: 1px solid var(--line); min-width: 0; }
+.dia div:last-child { border-right: 0; }
+.dia small { display: block; font-family: var(--display); font-weight: 900; font-size: 13px; letter-spacing: .1em; color: var(--accent); }
+.dia b { display: block; font-size: 15px; margin-top: 2px; }
+.dia span { font-size: 14px; color: var(--muted); }
+
+/* ── Capítulos ── */
+.cap { padding-block: 64px 8px; scroll-margin-top: calc(env(safe-area-inset-top, 0px) + 58px); }
+.cap-head { display: flex; align-items: center; gap: 14px; margin-bottom: 8px; }
+.cap-head .ico { width: 48px; height: 48px; border-radius: 12px; background: var(--accent); color: var(--accent-ink); display: grid; place-items: center; flex: none; }
+.cap-head .ico svg { width: 26px; height: 26px; }
+h2 { font-family: var(--display); font-weight: 900; font-stretch: 82%; text-transform: uppercase; font-size: clamp(2rem, 5vw, 2.8rem); line-height: 1; margin: 0; letter-spacing: .005em; }
+.cap > .wrap > p.intro { color: var(--muted); font-size: 1.06rem; max-width: 62ch; margin: 6px 0 28px; }
+
+.paso { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 40px; align-items: start; padding-block: 28px; border-top: 1px solid var(--line); }
+.paso.ancho { grid-template-columns: minmax(0, 1fr) 640px; }
+.paso h3 { font-family: var(--display); font-weight: 800; font-size: 1.35rem; margin: 0 0 8px; text-wrap: balance; }
+.paso p { margin: 0 0 12px; max-width: 62ch; }
+.paso ol, .paso ul { margin: 0 0 14px; padding-left: 1.25em; display: grid; gap: 6px; max-width: 62ch; }
+.paso li::marker { color: var(--accent); font-weight: 700; }
+.figs { display: grid; gap: 14px; justify-items: center; }
+.figs.dos { grid-template-columns: 1fr 1fr; align-items: start; }
+
+/* Pantalla del POS */
+figure { margin: 0; width: 100%; max-width: 300px; }
+.pantalla {
+  display: block; width: 100%; padding: 0; border: 0; cursor: zoom-in;
+  background: var(--frame); border-radius: 22px; padding: 7px; box-shadow: var(--shadow);
+}
+.pantalla img { display: block; width: 100%; height: auto; border-radius: 16px; }
+figcaption { font-size: 13px; color: var(--muted); text-align: center; margin-top: 8px; line-height: 1.4; }
+
+/* Botones de la app nombrados en el texto */
+.btn {
+  display: inline-block; font-family: var(--display); font-weight: 800; font-size: .82em; letter-spacing: .06em; text-transform: uppercase;
+  padding: 1px 8px; border-radius: 6px; border: 1px solid var(--line); background: var(--surface); white-space: nowrap;
+}
+.btn.verde { background: var(--accent); color: var(--accent-ink); border-color: transparent; }
+
+.ejemplo { background: var(--accent-soft); border-radius: 12px; padding: 14px 16px; margin: 4px 0 14px; max-width: 62ch; }
+.ejemplo strong:first-child { display: block; font-family: var(--display); font-size: 12px; letter-spacing: .12em; text-transform: uppercase; color: var(--accent); margin-bottom: 2px; }
+.ojo { background: var(--warn-soft); color: var(--ink); border-radius: 12px; padding: 12px 16px; margin: 4px 0 14px; max-width: 62ch; }
+.ojo strong:first-child { color: var(--warn); }
+.admin { font-family: var(--display); font-weight: 800; font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--warn); border: 1px solid currentColor; border-radius: 5px; padding: 0 5px; margin-left: 4px; vertical-align: 2px; white-space: nowrap; }
+.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* Cuentas del ticket */
+.ticket { font-variant-numeric: tabular-nums; width: 100%; max-width: 360px; border-collapse: collapse; font-size: 15px; margin: 4px 0 14px; }
+.ticket td { padding: 4px 0; border-bottom: 1px dashed var(--line); }
+.ticket td:last-child { text-align: right; white-space: nowrap; }
+.ticket tr.total td { border-bottom: 0; font-weight: 700; padding-top: 8px; }
+
+.paso.solo { grid-template-columns: minmax(0, 1fr); }
+.paso .extras { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin: 8px 0 0; padding: 0; list-style: none; }
+.paso .extras li { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 14px; min-width: 0; }
+.extras b { display: block; margin-bottom: 2px; }
+.extras span { font-size: 14px; color: var(--muted); }
+
+/* Preguntas */
+.faq { display: grid; gap: 10px; max-width: 760px; }
+details { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; }
+summary { cursor: pointer; padding: 14px 16px; font-weight: 600; list-style: none; display: flex; justify-content: space-between; gap: 12px; min-height: 48px; align-items: center; }
+summary::-webkit-details-marker { display: none; }
+summary::after { content: "+"; font-family: var(--display); font-weight: 900; font-size: 22px; color: var(--accent); line-height: 1; }
+details[open] summary::after { content: "–"; }
+details div { padding: 0 16px 14px; color: var(--muted); }
+details div p { margin: 0 0 8px; }
+
+.volver { display: inline-flex; align-items: center; min-height: 44px; font-weight: 600; text-decoration: none; }
+footer { padding-block: 48px 64px; color: var(--muted); font-size: 14px; }
+
+/* Ampliar captura */
+dialog { border: 0; padding: 0; background: transparent; max-width: min(92vw, 420px); }
+dialog::backdrop { background: rgba(8, 10, 8, .82); }
+dialog img { display: block; width: 100%; height: auto; max-height: 88vh; object-fit: contain; border-radius: 18px; }
+dialog button { margin: 10px auto 0; display: block; min-height: 44px; padding: 0 18px; border-radius: 10px; border: 0; background: var(--surface); color: var(--ink); font-weight: 700; cursor: pointer; }
+
+@media (max-width: 860px) {
+  .paso, .paso.ancho { grid-template-columns: minmax(0, 1fr); gap: 18px; }
+  .figs { justify-items: center; }
+  .mapa { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .mapa a:last-child { grid-column: 1 / -1; }
+  .dia { grid-template-columns: 1fr 1fr; }
+  .dia div:nth-child(2) { border-right: 0; }
+  .dia div:nth-child(-n+2) { border-bottom: 1px solid var(--line); }
+}
+@media (max-width: 520px) {
+  .figs.dos { grid-template-columns: 1fr 1fr; gap: 10px; }
+  figure { max-width: 280px; }
+  .pantalla { border-radius: 16px; padding: 5px; }
+  .pantalla img { border-radius: 12px; }
+  .hero { padding-block: 32px 20px; }
+}
+@media (prefers-reduced-motion: no-preference) { html { scroll-behavior: smooth; } }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-venta" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2.25 3h1.386c.51 0 .955.343 1.087.835l.383 1.437M7.5 14.25a3 3 0 0 0-3 3h15.75m-12.75-3h11.218c1.121-2.3 2.1-4.684 2.924-7.138a60.114 60.114 0 0 0-16.536-1.84M7.5 14.25 5.106 5.272M6 20.25a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Zm12.75 0a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Z"/></symbol>
+    <symbol id="i-recepcion" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m20.25 7.5-.625 10.632a2.25 2.25 0 0 1-2.247 2.118H6.622a2.25 2.25 0 0 1-2.247-2.118L3.75 7.5m8.25 3v6.75m0 0-3-3m3 3 3-3M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125Z"/></symbol>
+    <symbol id="i-inventario" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M11.35 3.836c-.065.21-.1.433-.1.664 0 .414.336.75.75.75h4.5a.75.75 0 0 0 .75-.75 2.25 2.25 0 0 0-.1-.664m-5.8 0A2.251 2.251 0 0 1 13.5 2.25H15c1.012 0 1.867.668 2.15 1.586m-5.8 0c-.376.023-.75.05-1.124.08C9.095 4.01 8.25 4.973 8.25 6.108V8.25m8.9-4.414c.376.023.75.05 1.124.08 1.131.094 1.976 1.057 1.976 2.192V16.5A2.25 2.25 0 0 1 18 18.75h-2.25m-7.5-10.5H4.875c-.621 0-1.125.504-1.125 1.125v11.25c0 .621.504 1.125 1.125 1.125h9.75c.621 0 1.125-.504 1.125-1.125V18.75m-7.5-10.5h6.375c.621 0 1.125.504 1.125 1.125v9.375m-8.25-3 1.5 1.5 3-3.75"/></symbol>
+    <symbol id="i-caja" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2.25 18.75a60.07 60.07 0 0 1 15.797 2.101c.727.198 1.453-.342 1.453-1.096V18.75M3.75 4.5v.75A.75.75 0 0 1 3 6h-.75m0 0v-.375c0-.621.504-1.125 1.125-1.125H20.25M2.25 6v9m18-10.5v.75c0 .414.336.75.75.75h.75m-1.5-1.5h.375c.621 0 1.125.504 1.125 1.125v9.75c0 .621-.504 1.125-1.125 1.125h-.375m1.5-1.5H21a.75.75 0 0 0-.75.75v.75m0 0H3.75m0 0h-.375a1.125 1.125 0 0 1-1.125-1.125V15m1.5 1.5v-.75A.75.75 0 0 0 3 15h-.75M15 10.5a3 3 0 1 1-6 0 3 3 0 0 1 6 0Zm3 0h.008v.008H18V10.5Zm-12 0h.008v.008H6V10.5Z"/></symbol>
+    <symbol id="i-productos" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9.568 3H5.25A2.25 2.25 0 0 0 3 5.25v4.318c0 .597.237 1.17.659 1.591l9.581 9.581c.699.699 1.78.872 2.607.33a18.095 18.095 0 0 0 5.223-5.223c.542-.827.369-1.908-.33-2.607L11.16 3.66A2.25 2.25 0 0 0 9.568 3Z"/><path d="M6 6h.008v.008H6V6Z"/></symbol>
+    <symbol id="i-empezar" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z"/></symbol>
+    <symbol id="i-ayuda" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.179-.43.326-.67.442-.745.361-1.45.999-1.45 1.827v.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 5.25h.008v.008H12v-.008Z"/></symbol>
+  </defs>
+</svg>
+
+<div class="tabs">
+  <div class="wrap">
+    <nav aria-label="Secciones de la guía">
+      <a href="#empezar"><svg><use href="#i-empezar"/></svg>Empezar</a>
+      <a href="#venta"><svg><use href="#i-venta"/></svg>Venta</a>
+      <a href="#caja"><svg><use href="#i-caja"/></svg>Caja</a>
+      <a href="#recepcion"><svg><use href="#i-recepcion"/></svg>Recepción</a>
+      <a href="#inventario"><svg><use href="#i-inventario"/></svg>Inventario</a>
+      <a href="#productos"><svg><use href="#i-productos"/></svg>Productos</a>
+      <a href="#ayuda"><svg><use href="#i-ayuda"/></svg>Si algo falla</a>
+    </nav>
+  </div>
+</div>
+
+<header class="wrap hero">
+  <a class="volver" href="/" id="volver" hidden>← Volver a la app</a>
+  <div>
+    <div class="eyebrow">Olivo Market · App del mostrador</div>
+    <h1>Manual del mostrador</h1>
+  </div>
+  <p class="lede">Todo lo que se hace en la app del local, pantalla por pantalla: vender, abrir y cerrar la caja, recibir mercadería, contar el inventario y corregir productos. Las capturas son de la app real con datos de ejemplo.</p>
+
+  <div class="mapa" aria-label="Las cinco pestañas de la app">
+    <a href="#venta"><svg><use href="#i-venta"/></svg><b>Venta</b><span>Buscar o escanear, cobrar y dar vuelto.</span></a>
+    <a href="#recepcion"><svg><use href="#i-recepcion"/></svg><b>Recepción</b><span>Mercadería que llega y traspasos entre sedes.</span></a>
+    <a href="#inventario"><svg><use href="#i-inventario"/></svg><b>Inventario</b><span>Contar lo que hay, entre varios teléfonos.</span></a>
+    <a href="#caja"><svg><use href="#i-caja"/></svg><b>Caja</b><span>Turno, gastos, ventas del día, cierre y fiados.</span></a>
+    <a href="#productos"><svg><use href="#i-productos"/></svg><b>Productos</b><span>Precios, ofertas, fotos y stock.</span></a>
+  </div>
+
+  <div class="dia" aria-label="Un día en el mostrador">
+    <div><small>1 · Mañana</small><b>Abrir la caja</b><span>Caja → Turno, con el efectivo inicial.</span></div>
+    <div><small>2 · Todo el día</small><b>Vender</b><span>Venta → escanear → cobrar.</span></div>
+    <div><small>3 · Cuando pase</small><b>Anotar gastos</b><span>Caja → Gasto rápido.</span></div>
+    <div><small>4 · Noche</small><b>Cerrar la caja</b><span>Caja → Cierre, en 5 pasos.</span></div>
+  </div>
+</header>
+
+<!-- ───────────── EMPEZAR ───────────── -->
+<section class="cap" id="empezar">
+  <div class="wrap">
+    <div class="cap-head"><span class="ico"><svg><use href="#i-empezar"/></svg></span><h2>Antes de empezar</h2></div>
+    <p class="intro">Arriba de todas las pantallas hay dos botones. Revísalos al tomar el teléfono: definen a nombre de quién queda lo que hagas y en qué local.</p>
+
+    <div class="paso">
+      <div>
+        <h3>¿Quién atiende?</h3>
+        <p>El botón de la izquierda muestra tu nombre. Si no eres tú, tócalo y elige tu nombre. Cambiar de persona no cierra la sesión.</p>
+        <ul>
+          <li>Tus ventas, gastos y conteos quedan a tu nombre.</li>
+          <li>En el inventario, cada teléfono necesita su propia persona: así se sabe quién contó qué.</li>
+        </ul>
+        <p><span class="btn">Cerrar sesión</span> está en esa misma ventana. Úsalo solo si hay que entrar con otra cuenta.</p>
+      </div>
+      <div class="figs"><figure><button class="pantalla" type="button"><img src="img/quien.webp" width="780" height="638" alt="Ventana ¿Quién atiende? con los nombres Mariana, Alfredo, Ingrid y Fabricio" loading="lazy"></button><figcaption>Elige tu nombre.</figcaption></figure></div>
+    </div>
+
+    <div class="paso">
+      <div>
+        <h3>¿En qué local estás?</h3>
+        <p>El botón de la derecha es la sede: <b>Principal</b> (el minimarket) o <b>Sucursal</b>. Cada una tiene su propia caja y su propio stock.</p>
+        <div class="ojo"><strong>Ojo:</strong> si el teléfono quedó en la otra sede, vas a ver otro stock y la caja puede aparecer cerrada. El teléfono recuerda la sede que elijas.</div>
+      </div>
+      <div class="figs"><figure><button class="pantalla" type="button"><img src="img/sede.webp" width="780" height="420" alt="Selector de sede con Principal y Sucursal" loading="lazy"></button><figcaption>Toca la sede para cambiarla.</figcaption></figure></div>
+    </div>
+
+    <div class="paso solo">
+      <div>
+        <h3>Sin internet y actualizaciones</h3>
+        <ul>
+          <li><b>Sin internet se puede seguir vendiendo.</b> Las ventas y los lotes se guardan en el teléfono y se envían solos cuando vuelve la conexión. Un punto naranja con un número arriba indica cuántas cosas faltan por enviar; tócalo para enviarlas ya.</li>
+          <li><b>La app se actualiza sola</b> cuando vuelves a ella. Si la estás usando y sale la barra verde <span class="btn verde">Hay una versión nueva</span>, tócala cuando termines lo que estás haciendo.</li>
+          <li>Si arriba aparece <span class="btn">Vuelve a entrar</span>, la sesión venció: entra de nuevo con tu correo y contraseña. No se pierde lo pendiente.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ───────────── VENTA ───────────── -->
+<section class="cap" id="venta">
+  <div class="wrap">
+    <div class="cap-head"><span class="ico"><svg><use href="#i-venta"/></svg></span><h2>Venta</h2></div>
+    <p class="intro">Se vende desde la primera pestaña. Para vender, la caja de la sede tiene que estar abierta (ver <a href="#caja">Caja</a>).</p>
+
+    <div class="paso">
+      <div>
+        <h3>1. Agrega los productos</h3>
+        <ol>
+          <li>Escanea el código con el lector, o toca el ícono de cámara y apunta al código.</li>
+          <li>Si no tiene código, escribe el nombre en <span class="btn">Buscar o escanear</span> y toca el producto.</li>
+          <li>Cada toque o escaneo suma una unidad.</li>
+        </ol>
+        <p>Los precios en verde ya incluyen las ofertas: debajo se ve el precio de antes. <b>Sin stock</b> en amarillo avisa que el sistema cree que no queda, pero igual se puede vender.</p>
+      </div>
+      <div class="figs"><figure><button class="pantalla" type="button"><img src="img/inicio.webp" width="780" height="1180" alt="Pantalla Venta con el buscador y la grilla de productos con precios" loading="lazy"></button><figcaption>Pantalla de Venta.</figcaption></figure></div>
+    </div>
+
+    <div class="paso">
+      <div>
+        <h3>2. Productos por peso</h3>
+        <p>Los que dicen <b>KG</b> (como los quesos) piden el peso en gramos, tal como lo muestra la balanza. El precio que ves es por kilo.</p>
+        <div class="ejemplo"><strong>Ejemplo</strong>Queso semiduro a <span class="num">$11.400</span> el kilo. La balanza marca 340 g: escribes <b>340</b> y la app calcula <span class="num">$3.876</span>.</div>
+        <p>Los botones 100 g, 250 g, 500 g, 750 g y 1 kg sirven para los pesos más comunes.</p>
+      </div>
+      <div class="figs"><figure><button class="pantalla" type="button"><img src="img/peso.webp" width="780" height="600" alt="Ventana de peso con 340 gramos y subtotal 3.876 pesos" loading="lazy"></button><figcaption>Peso en gramos y subtotal.</figcaption></figure></div>
+    </div>
+
+    <div class="paso">
+      <div>
+        <h3>3. Revisa el carrito</h3>
+        <p>Arriba aparece la barra verde <span class="btn verde">Cobrar · 4 art.</span> con el total. Tócala para ver el carrito.</p>
+        <ul>
+          <li><b>− y +</b> cambian la cantidad; la <b>×</b> quita el producto.</li>
+          <li><b>Precio especial</b>: cobra otro precio solo en esta venta. No cambia el precio del producto.</li>
+          <li><b>Corregir precio</b>: el precio está mal en el sistema. Se corrige para siempre.</li>
+          <li>El basurero de arriba vacía el carrito; sale un aviso con <b>Deshacer</b> por si fue sin querer.</li>
+        </ul>
+      </div>
+      <div class="figs dos">
+        <figure><button class="pantalla" type="button"><img src="img/barra-cobrar.webp" width="780" height="640" alt="Barra verde Cobrar con 4 artículos por 10.176 pesos" loading="lazy"></button><figcaption>La barra Cobrar.</figcaption></figure>
+        <figure><button class="pantalla" type="button"><img src="img/carrito.webp" width="780" height="1688" alt="Carrito con Coca-Cola Zero, Harina PAN y queso, y opciones de pago" loading="lazy"></button><figcaption>El carrito.</figcaption></figure>
+      </div>
+    </div>
+
+    <div class="paso">
+      <div>
+        <h3>4. Cobra</h3>
+        <ol>
+          <li>Elige el medio: <span class="btn">Efectivo</span>, <span class="btn">Tarjeta</span> o <span class="btn">Transf.</span></li>
+          <li>En efectivo, escribe lo que te pasaron o usa los botones <b>Exacto, 1k, 2k, 5k, 10k, 20k</b>. La app muestra el vuelto.</li>
+          <li>Toca <span class="btn verde">Cobrar</span>.</li>
+        </ol>
+        <div class="ejemplo"><strong>Ejemplo completo</strong>
+          <table class="ticket">
+            <tr><td>2 × Coca-Cola Zero 1,5 L (oferta <span class="num">$2.400</span>)</td><td><span class="num">$4.800</span></td></tr>
+            <tr><td>1 × Harina PAN blanca</td><td><span class="num">$1.500</span></td></tr>
+            <tr><td>340 g de queso semiduro</td><td><span class="num">$3.876</span></td></tr>
+            <tr class="total"><td>Total</td><td><span class="num">$10.176</span></td></tr>
+            <tr><td>Paga con</td><td><span class="num">$20.000</span></td></tr>
+            <tr class="total"><td>Vuelto</td><td><span class="num">$9.824</span></td></tr>
+          </table>
+        </div>
+        <p>Si paga una parte en efectivo y otra con tarjeta, toca <span class="btn">+ Pago mixto</span>.</p>
+      </div>
+      <div class="figs"><figure><button class="pantalla" type="button"><img src="img/vuelto.webp" width="780" height="928" alt="Pago en efectivo con 20.000 recibidos y vuelto de 9.824" loading="lazy"></button><figcaption>Recibido y vuelto.</figcaption></figure></div>
+    </div>
+
+    <div class="paso solo">
+      <div>
+        <h3>Otras formas de cobrar</h3>
+        <ul class="extras">
+          <li><b>Compra propia (−25%)</b><span>Cuando compra alguien del equipo. Se elige quién compra y puede quedar <i>por cobrar</i> para descontarlo después.</span></li>
+          <li><b>Fiado</b><span>Para un cliente de confianza. Se anota a su cuenta y se ve en Caja → Fiados.</span></li>
+          <li><b>Producto sin precio</b><span>La app pide el precio antes de agregarlo. Queda guardado en el producto.</span></li>
+          <li><b>Código que no existe</b><span>La app ofrece crear el producto ahí mismo con nombre y precio.</span></li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ───────────── CAJA ───────────── -->
+<section class="cap" id="caja">
+  <div class="wrap">
+    <div class="cap-head"><span class="ico"><svg><use href="#i-caja"/></svg></span><h2>Caja</h2></div>
+    <p class="intro">Caja tiene cuatro apartados: <b>Turno</b> (el día en curso), <b>Cierre</b>, <b>Historial</b> y <b>Fiados</b>. Cada sede tiene su propia caja.</p>
+
+    <div class="paso">
+      <div>
+        <h3>Abrir la caja</h3>
+        <p>Si la caja está cerrada, Venta no deja cobrar y muestra <b>La caja está cerrada</b>. Toca <span class="btn verde">Ir a abrir la caja</span>.</p>
+        <ol>
+          <li>Cuenta el efectivo con que empiezas. La app propone lo que dejó el último cierre.</li>
+          <li>Confírmalo o cámbialo, y toca <span class="btn verde">Abrir caja con $…</span>.</li>
+        </ol>
+      </div>
+      <div class="figs dos">
+        <figure><button class="pantalla" type="button"><img src="img/caja-cerrada.webp" width="780" height="900" alt="Aviso La caja está cerrada en la pantalla de Venta" loading="lazy"></button><figcaption>Sin caja no se vende.</figcaption></figure>
+        <figure><button class="pantalla" type="button"><img src="img/abrir-caja.webp" width="780" height="1020" alt="Pantalla Abrir caja con 25.000 pesos propuestos" loading="lazy"></button><figcaption>Abrir caja.</figcaption></figure>
+      </div>
+    </div>
+
+    <div class="paso">
+      <div>
+        <h3>El turno en curso</h3>
+        <p>Muestra cuánto se ha vendido por medio de pago y, en amarillo, cuánto <b>debería haber en el cajón</b>.</p>
+        <div class="ejemplo"><strong>Cómo se calcula lo esperado en caja</strong>
+          <table class="ticket">
+            <tr><td>Inicio</td><td><span class="num">$20.000</span></td></tr>
+            <tr><td>+ Ventas en efectivo</td><td><span class="num">$4.800</span></td></tr>
+            <tr><td>+ Ingresos (sencillo que llegó)</td><td><span class="num">$5.000</span></td></tr>
+            <tr><td>− Gastos y egresos</td><td><span class="num">$3.500</span></td></tr>
+            <tr class="total"><td>Esperado en caja</td><td><span class="num">$26.300</span></td></tr>
+          </table>
+        </div>
+        <p>Tarjeta y transferencia no cambian lo que hay en el cajón. Las ventas anuladas no se cuentan.</p>
+      </div>
+      <div class="figs"><figure><button class="pantalla" type="button"><img src="img/turno.webp" width="780" height="970" alt="Resumen del turno: inicio, ventas por medio de pago y esperado en caja" loading="lazy"></button><figcaption>Resumen del turno.</figcaption></figure></div>
+    </div>
+
+    <div class="paso">
+      <div>
+        <h3>Gasto rápido en efectivo</h3>
+        <p>Para compras chicas pagadas con plata de la caja: bolsas, aseo, hielo, pan, gas, movilización.</p>
+        <ol>
+          <li>Escribe el monto.</li>
+          <li>Elige el tipo y, si quieres, escribe qué se compró.</li>
+          <li>Toca <span class="btn">Registrar gasto</span> y confirma.</li>
+        </ol>
+        <div class="ejemplo"><strong>Ejemplo</strong>Compraste cloro y bolsas de basura por <span class="num">$3.500</span>: monto 3.500, tipo <b>Aseo</b>, detalle "cloro y bolsas de basura". El esperado en caja baja <span class="num">$3.500</span>.</div>
+        <p>Debajo está <b>Ingreso / egreso manual</b>, para otros movimientos de plata (por ejemplo, sencillo que traen del minimarket). Un movimiento no se puede borrar: revisa el monto antes de confirmar.</p>
+      </div>
+      <div class="figs"><figure><button class="pantalla" type="button"><img src="img/gasto.webp" width="780" height="688" alt="Confirmación de gasto: sale de la caja 3.500 en efectivo, Gasto Aseo" loading="lazy"></button><figcaption>Se confirma antes de registrar.</figcaption></figure></div>
+    </div>
+
+    <div class="paso">
+      <div>
+        <h3>Corregir o anular una venta</h3>
+        <p>En <b>Ventas del turno</b> están todas las ventas del día. Toca una para ver el detalle.</p>
+        <ul>
+          <li><span class="btn">Anular</span> la deja sin efecto y devuelve el stock.</li>
+          <li><span class="btn">Anular y corregir</span> la anula y vuelve a Venta con los mismos productos, para cobrarla bien.</li>
+          <li>La app dice qué devolverle al cliente: efectivo, reversar la tarjeta o devolver la transferencia.</li>
+        </ul>
+        <p>Cualquier persona puede anular las ventas del turno abierto. Una venta de un turno ya cerrado solo la anula un administrador <span class="admin">Admin</span>; la vendedora puede dejarla marcada para que la revise.</p>
+      </div>
+      <div class="figs dos">
+        <figure><button class="pantalla" type="button"><img src="img/ventas-turno.webp" width="780" height="1128" alt="Lista de ventas del turno con montos, medio de pago y una venta anulada" loading="lazy"></button><figcaption>Ventas del turno.</figcaption></figure>
+        <figure><button class="pantalla" type="button"><img src="img/anular.webp" width="780" height="1288" alt="Anular venta: motivo, aviso de devolver 4.800 en efectivo y botones Anular y Anular y corregir" loading="lazy"></button><figcaption>Elegir el motivo y anular.</figcaption></figure>
+      </div>
+    </div>
+
+    <div class="paso">
+      <div>
+        <h3>Cerrar la caja, en 5 pasos</h3>
+        <p>Caja → <b>Cierre</b>. Avanza con <span class="btn">Siguiente</span>:</p>
+        <ol>
+          <li><b>Efectivo</b>: cuenta billetes y monedas con + y −. La app suma.</li>
+          <li><b>Transferencias</b>: las de las ventas del turno se traen con un toque.</li>
+          <li><b>Tarjeta</b>: los montos de los vouchers.</li>
+          <li><b>Fiados</b>: lo anotado y abonado en el día.</li>
+          <li><b>Resumen</b>: compara lo que contaste con lo que registró la app, y pide cuánto dejas en la caja para mañana. Toca <span class="btn verde">Registrar cierre</span>.</li>
+        </ol>
+        <div class="ejemplo"><strong>Ejemplo</strong>Esperado <span class="num">$26.300</span>. Cuentas 1 billete de 20.000, 1 de 5.000, 1 de 1.000 y 3 monedas de 100 = <span class="num">$26.300</span>: el resumen dice <b>✓ Cuadra</b>. Si no cuadra, muestra cuánto sobra o falta y deja <b>Volver a contar</b>.</div>
+      </div>
+      <div class="figs dos">
+        <figure><button class="pantalla" type="button"><img src="img/cierre-efectivo.webp" width="780" height="1528" alt="Paso Efectivo del cierre con conteo de billetes y monedas" loading="lazy"></button><figcaption>Paso 1: Efectivo.</figcaption></figure>
+        <figure><button class="pantalla" type="button"><img src="img/cierre-resumen.webp" width="780" height="1528" alt="Paso Resumen del cierre: efectivo cuadra, transferencias con diferencia" loading="lazy"></button><figcaption>Paso 5: Resumen.</figcaption></figure>
+      </div>
+    </div>
+
+    <div class="paso">
+      <div>
+        <h3>Historial y fiados</h3>
+        <ul>
+          <li><b>Historial</b>: los cierres del mes, día por día, con las ventas por medio de pago. Se puede ver solo esta sede o todas.</li>
+          <li><b>Fiados</b>: cuánto debe cada cliente y hace cuántos días. <span class="btn">+ Anotar fiado</span> suma deuda; <span class="btn">Registrar abono</span> descuenta lo que pagó.</li>
+        </ul>
+      </div>
+      <div class="figs dos">
+        <figure><button class="pantalla" type="button"><img src="img/historial.webp" width="780" height="1290" alt="Historial de cierres de noviembre con totales por día" loading="lazy"></button><figcaption>Historial.</figcaption></figure>
+        <figure><button class="pantalla" type="button"><img src="img/fiados.webp" width="780" height="840" alt="Fiados: total por cobrar y saldo de cada cliente" loading="lazy"></button><figcaption>Fiados.</figcaption></figure>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ───────────── RECEPCIÓN ───────────── -->
+<section class="cap" id="recepcion">
+  <div class="wrap">
+    <div class="cap-head"><span class="ico"><svg><use href="#i-recepcion"/></svg></span><h2>Recepción</h2></div>
+    <p class="intro">Para la mercadería que llega. Arriba se elige qué tipo: <b>Recepción proveedor</b> (suma stock nuevo) o <b>Traspaso entre sedes</b> (mueve stock de un local al otro).</p>
+
+    <div class="paso">
+      <div>
+        <h3>Recibir de un proveedor</h3>
+        <ol>
+          <li>Escanea cada producto o búscalo por nombre.</li>
+          <li>Ajusta la cantidad con − y + o escríbela.</li>
+          <li>Si cambió el costo, toca <span class="btn">Precio y costo</span>: la app sugiere el precio de venta según el margen.</li>
+          <li>Toca <span class="btn verde">Confirmar recepción</span>. El stock sube en la sede elegida.</li>
+        </ol>
+        <div class="ejemplo"><strong>Ejemplo</strong>Llegan 12 Coca-Cola Zero 1,5 L. Escaneas una, escribes 12 y confirmas: el stock pasa de 8 a 20.</div>
+        <p>La lista se guarda en el teléfono hasta confirmar: si cambias de pestaña no se pierde. Un producto que no existe se puede crear ahí mismo; si el producto ya existe con un código genérico, se queda con el código real que escaneaste.</p>
+      </div>
+      <div class="figs"><figure><button class="pantalla" type="button"><img src="img/recepcion.webp" width="780" height="1688" alt="Lista de recepción con Coca-Cola Zero por 12 y Harina PAN por 1, con precio y costo" loading="lazy"></button><figcaption>Lista de recepción.</figcaption></figure></div>
+    </div>
+
+    <div class="paso">
+      <div>
+        <h3>Traspaso entre sedes</h3>
+        <ol>
+          <li>Elige <b>Sale de</b> y <b>Llega a</b>. El botón ⇄ los invierte.</li>
+          <li>Escanea lo que se lleva y pon las cantidades. Cada línea muestra cuánto hay en el origen.</li>
+          <li>Toca <span class="btn verde">Confirmar traspaso</span>: resta en un local y suma en el otro.</li>
+        </ol>
+        <p>Abajo, <b>Últimos traspasos</b> muestra quién movió qué y cuándo. Lo pueden hacer todos.</p>
+      </div>
+      <div class="figs"><figure><button class="pantalla" type="button"><img src="img/traspaso.webp" width="780" height="1320" alt="Traspaso de Principal a Sucursal con cámara para escanear" loading="lazy"></button><figcaption>Origen, destino y escáner.</figcaption></figure></div>
+    </div>
+  </div>
+</section>
+
+<!-- ───────────── INVENTARIO ───────────── -->
+<section class="cap" id="inventario">
+  <div class="wrap">
+    <div class="cap-head"><span class="ico"><svg><use href="#i-inventario"/></svg></span><h2>Inventario</h2></div>
+    <p class="intro">Para contar lo que hay de verdad en el local. Varios teléfonos cuentan a la vez sobre el mismo inventario y lo que cuenta cada uno se suma.</p>
+
+    <div class="paso">
+      <div>
+        <h3>1. Iniciar el modo inventario</h3>
+        <p>Una sola persona toca <span class="btn verde">Iniciar modo inventario</span>. Los demás teléfonos entran solos al mismo inventario.</p>
+        <ul>
+          <li><b>Mantener el inventario actual</b>: solo cambia lo que se escanee. Para una góndola o un recuento parcial.</li>
+          <li><b>Empezar desde 0</b> <span class="admin">Admin</span>: inventario completo; lo que no se cuente queda en 0 al cerrar.</li>
+        </ul>
+        <p>Mientras se cuenta, la tienda sigue vendiendo. El stock se actualiza recién al cerrar, descontando lo vendido entremedio.</p>
+      </div>
+      <div class="figs"><figure><button class="pantalla" type="button"><img src="img/inventario-inicio.webp" width="780" height="1528" alt="Pantalla Inventario con las opciones Mantener el inventario actual y Empezar desde 0" loading="lazy"></button><figcaption>Elegir cómo empieza.</figcaption></figure></div>
+    </div>
+
+    <div class="paso">
+      <div>
+        <h3>2. Escanear y contar</h3>
+        <ol>
+          <li>Escanea cada envase: cada escaneo suma una unidad. También puedes escribir la cantidad.</li>
+          <li>Si quieres, anota el <b>vencimiento</b> y revisa el <b>precio</b> de esa línea. El lápiz abre la ficha completa.</li>
+          <li>Al terminar un sector, toca <span class="btn verde">Guardar lote</span>.</li>
+        </ol>
+        <div class="ejemplo"><strong>Ejemplo: tres personas, un producto</strong>Mariana cuenta 3 Coca-Cola Zero en la vitrina, Alfredo 5 en la bodega y Fabricio 2 en el refrigerador. El inventario queda en <b>3 + 5 + 2 = 10</b>.</div>
+        <p>Si escaneas algo que ya contó otra persona, sale un aviso con lo que ya se contó y quién lo contó. Si es el mismo lugar, no lo vuelvas a sumar: toca <span class="btn">Corregir</span> y escribe la cantidad real.</p>
+      </div>
+      <div class="figs dos">
+        <figure><button class="pantalla" type="button"><img src="img/inventario-aviso.webp" width="780" height="640" alt="Aviso: ya se contaron 10, Mariana 3, Alfredo 5 y Fabricio 2" loading="lazy"></button><figcaption>Aviso de ya contado.</figcaption></figure>
+        <figure><button class="pantalla" type="button"><img src="img/inventario-lineas.webp" width="780" height="1688" alt="Lista sin guardar con precio, vencimiento y el botón Guardar lote" loading="lazy"></button><figcaption>Lista sin guardar.</figcaption></figure>
+      </div>
+    </div>
+
+    <div class="paso">
+      <div>
+        <h3>3. Revisar lo ya escaneado</h3>
+        <p><b>Ya escaneados</b> lista todo lo guardado por todos los teléfonos: el total de cada producto, quién contó cuánto y a qué hora. Tiene buscador y un botón <span class="btn">Corregir</span> por producto.</p>
+        <p>Úsalo antes de contar un estante para no contarlo dos veces.</p>
+      </div>
+      <div class="figs"><figure><button class="pantalla" type="button"><img src="img/ya-escaneados.webp" width="780" height="720" alt="Ya escaneados: Coca-Cola Zero 10, Samba 8, Harina PAN 14, con botón Corregir" loading="lazy"></button><figcaption>Todo lo contado, por producto.</figcaption></figure></div>
+    </div>
+
+    <div class="paso">
+      <div>
+        <h3>4. Cerrar el inventario, una sola vez</h3>
+        <p>Cuando <b>todos</b> terminaron y guardaron sus lotes, una persona toca <span class="btn verde">Cerrar y aplicar lo escaneado</span>. Ahí se actualiza el stock.</p>
+        <div class="ojo"><strong>Importante:</strong> cerrar termina el inventario en todos los teléfonos. Para subir lo que contaste usa <b>Guardar lote</b>, nunca cerrar. Si alguien cerró antes de tiempo, tu lista sigue en el teléfono y se guarda en el inventario que esté abierto.</div>
+        <p><b>Conteo total: poner en 0 lo no contado</b> <span class="admin">Admin</span> es solo para cuando se recorrió todo el local.</p>
+      </div>
+      <div class="figs"><figure><button class="pantalla" type="button"><img src="img/cerrar-inventario.webp" width="780" height="808" alt="Cerrar inventario con las opciones Cerrar y aplicar lo escaneado y Conteo total" loading="lazy"></button><figcaption>Cerrar inventario.</figcaption></figure></div>
+    </div>
+  </div>
+</section>
+
+<!-- ───────────── PRODUCTOS ───────────── -->
+<section class="cap" id="productos">
+  <div class="wrap">
+    <div class="cap-head"><span class="ico"><svg><use href="#i-productos"/></svg></span><h2>Productos</h2></div>
+    <p class="intro">Para buscar un producto y cambiar su precio, oferta, foto o stock.</p>
+
+    <div class="paso">
+      <div>
+        <h3>Buscar y filtrar</h3>
+        <ul>
+          <li>Escanea un código y se abre su ficha. Si no existe, se abre el alta con el código puesto.</li>
+          <li>Los filtros con número muestran lo que hay que revisar: <b>Sin precio</b>, <b>Sin stock</b>, <b>Bajo mínimo</b>, <b>Con oferta</b> e <b>Inactivos</b>. Un administrador ve además <b>Sin costo</b>, <b>Sin categoría</b> y <b>Sin foto</b>.</li>
+          <li><span class="btn">+ Nuevo</span> crea un producto.</li>
+        </ul>
+        <p>Botones de arriba:</p>
+        <ul>
+          <li><b>Inventario</b>: lista simple con nombre y stock.</li>
+          <li><b>Precios</b>: para pasar una lista de precios nueva rápido: escanear, escribir el precio, Enter.</li>
+          <li><b>Cambios hoy</b>: qué precios se cambiaron hoy y quién.</li>
+        </ul>
+      </div>
+      <div class="figs"><figure><button class="pantalla" type="button"><img src="img/productos.webp" width="780" height="1240" alt="Lista de productos con filtros y botones Inventario, Precios y Cambios hoy" loading="lazy"></button><figcaption>Lista de productos.</figcaption></figure></div>
+    </div>
+
+    <div class="paso">
+      <div>
+        <h3>La ficha del producto</h3>
+        <ul>
+          <li><b>Precio</b>: escribe el nuevo y presiona Enter.</li>
+          <li><b>Oferta</b>: precio rebajado, con fecha de término opcional. <span class="btn">Quitar oferta</span> la saca.</li>
+          <li><b>Costo con IVA</b> y el margen.</li>
+          <li><b>Tomar foto</b> con la cámara del teléfono.</li>
+          <li><b>Por peso</b> y <b>Activo</b>: un producto inactivo no aparece en Venta.</li>
+        </ul>
+        <p>Al guardar, la app muestra lo que cambió. Si otra persona lo cambió al mismo tiempo, avisa en vez de pisarlo.</p>
+      </div>
+      <div class="figs"><figure><button class="pantalla" type="button"><img src="img/ficha.webp" width="780" height="1688" alt="Ficha de Coca-Cola Zero 1,5 con precio 2.600 y oferta 2.400" loading="lazy"></button><figcaption>Ficha del producto.</figcaption></figure></div>
+    </div>
+
+    <div class="paso">
+      <div>
+        <h3>Ver y corregir el stock</h3>
+        <ol>
+          <li>Productos → <span class="btn">Inventario</span>: nombre y stock de la sede elegida. Viene filtrado a lo que tiene stock; desmarca <b>Solo con stock</b> para ver todo.</li>
+          <li>Si un número está mal, toca el producto.</li>
+          <li>Escribe <b>cuántas hay ahora</b>, elige el motivo y toca <span class="btn verde">Ajustar</span>.</li>
+        </ol>
+        <div class="ejemplo"><strong>Ejemplo</strong>El sistema dice 4 Samba y en la repisa hay 6: escribes 6, motivo <b>Corrección</b>. Queda en 6 y el ajuste se registra con tu nombre.</div>
+        <p>Motivos: Merma, Rotura, Vencido, Devolución a proveedor, Consumo del local y Corrección. Si alguien vendió justo antes, la app avisa y muestra el número actual para no deshacer esa venta.</p>
+      </div>
+      <div class="figs dos">
+        <figure><button class="pantalla" type="button"><img src="img/inventario-lista.webp" width="780" height="1300" alt="Inventario de la Sucursal: lista de productos con su stock" loading="lazy"></button><figcaption>Inventario de la sede.</figcaption></figure>
+        <figure><button class="pantalla" type="button"><img src="img/ajustar-stock.webp" width="780" height="1068" alt="Ajustar stock de Samba Fresa: sistema dice 4, ahora 6, motivo Corrección" loading="lazy"></button><figcaption>Ajustar stock.</figcaption></figure>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ───────────── AYUDA ───────────── -->
+<section class="cap" id="ayuda">
+  <div class="wrap">
+    <div class="cap-head"><span class="ico"><svg><use href="#i-ayuda"/></svg></span><h2>Si algo falla</h2></div>
+    <p class="intro">Lo que más se pregunta en el mostrador.</p>
+    <div class="faq">
+      <details><summary>Venta dice "La caja está cerrada"</summary><div><p>Revisa la sede arriba a la derecha: puede estar en la otra. Si es la correcta, abre la caja en Caja → Turno.</p></div></details>
+      <details><summary>Me equivoqué en una venta</summary><div><p>Caja → Turno → Ventas del turno → toca la venta → <b>Anular y corregir</b>. Vuelve a Venta con los mismos productos para cobrarla bien.</p></div></details>
+      <details><summary>Escaneé un código y no aparece el producto</summary><div><p>La app ofrece crearlo. Antes de crearlo, busca por nombre: si ya existe con otro código, elígelo y se queda con el código que escaneaste.</p></div></details>
+      <details><summary>No hay internet</summary><div><p>Sigue vendiendo. Lo pendiente se guarda en el teléfono y se envía solo; el punto naranja arriba muestra cuánto falta. Abrir y cerrar la caja sí necesitan conexión.</p></div></details>
+      <details><summary>En el inventario dice "El conteo ya está cerrado"</summary><div><p>Otra persona cerró el inventario. Tu lista sigue en el teléfono: toca actualizar arriba y vuelve a guardar el lote. Si hay un inventario abierto, se guarda en ese.</p></div></details>
+      <details><summary>El stock de un producto está mal</summary><div><p>Productos → Inventario → toca el producto → escribe cuántas hay → motivo Corrección → Ajustar.</p></div></details>
+      <details><summary>No veo una función nueva</summary><div><p>Cierra la app del todo y ábrela de nuevo. Desde ahí se actualiza sola.</p></div></details>
+      <details><summary>¿Qué solo puede hacer un administrador?</summary><div><p>Anular ventas de un turno ya cerrado, empezar un inventario desde 0, el conteo total que pone en 0 lo no contado y cambiar el código de un producto que ya tiene código real.</p></div></details>
+    </div>
+  </div>
+</section>
+
+<footer class="wrap">Olivo Market · Manual del mostrador. Capturas de la app con datos de ejemplo; los nombres de personas y montos son ilustrativos.</footer>
+
+<dialog id="zoom" aria-label="Captura ampliada">
+  <img alt="">
+  <button type="button" id="zoom-cerrar">Cerrar</button>
+</dialog>
+
+<script>
+(function () {
+  // Abierta suelta (no dentro de la app): ofrecer volver.
+  try { if (window.self === window.top) document.getElementById("volver").hidden = false; } catch (e) {}
+
+  // Ampliar una captura al tocarla.
+  var dlg = document.getElementById("zoom");
+  var img = dlg.querySelector("img");
+  document.querySelectorAll(".pantalla").forEach(function (b) {
+    b.addEventListener("click", function () {
+      var src = b.querySelector("img");
+      img.src = src.src; img.alt = src.alt;
+      if (dlg.showModal) dlg.showModal();
+    });
+  });
+  document.getElementById("zoom-cerrar").addEventListener("click", function () { dlg.close(); });
+  dlg.addEventListener("click", function (e) { if (e.target === dlg) dlg.close(); });
+
+  // Marcar en la barra la sección que se está leyendo.
+  var links = Array.prototype.slice.call(document.querySelectorAll(".tabs a"));
+  var porId = {};
+  links.forEach(function (a) { porId[a.getAttribute("href").slice(1)] = a; });
+  if ("IntersectionObserver" in window) {
+    var obs = new IntersectionObserver(function (entries) {
+      entries.forEach(function (en) {
+        if (!en.isIntersecting) return;
+        links.forEach(function (a) { a.removeAttribute("aria-current"); });
+        var a = porId[en.target.id];
+        if (a) {
+          a.setAttribute("aria-current", "true");
+          var nav = a.parentElement;
+          var izq = a.offsetLeft - nav.clientWidth / 2 + a.clientWidth / 2;
+          nav.scrollTo({ left: izq, behavior: "smooth" });
+        }
+      });
+    }, { rootMargin: "-45% 0px -50% 0px" });
+    document.querySelectorAll("section.cap").forEach(function (s) { obs.observe(s); });
+  }
+})();
+</script>
+</body>
+</html>

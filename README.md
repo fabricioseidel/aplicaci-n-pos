@@ -178,6 +178,14 @@ lo escaneado se encola en el outbox. Abrir y cerrar el conteo sí necesitan red.
   como ajuste absoluto sobre la sucursal (`MANUAL_ADJUSTMENT`), que es lo que
   antes se descartaba en silencio.
 
+## Guía de uso
+
+El botón **?** de la barra de arriba abre la guía ilustrada de la app
+(`public/guia/index.html`) a pantalla completa, en la sección de la pestaña
+donde se está. Se abre encima de la app (sin perder el carrito ni listas a
+medio hacer) y el "atrás" del teléfono la cierra. Las capturas están en
+`public/guia/img`. No se precachea para uso sin conexión: pesa ~1 MB.
+
 ## Sedes: minimarket y sucursal
 
 El minimarket es la sede por defecto (`is_default`) y su stock es el que vende

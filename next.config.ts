@@ -53,6 +53,10 @@ const withSerwist = withSerwistInit({
   // se cerraban modales y se cortaba el envío de la cola). La reconexión ya la
   // maneja SyncContext, que drena la cola sin recargar.
   reloadOnOnline: false,
+  // Solo íconos y manifest se guardan para usar sin conexión. La guía de uso
+  // (public/guia, ~1 MB de capturas) se carga al abrirla: precachearla haría
+  // descargar todo eso a cada teléfono en cada actualización.
+  globPublicPatterns: ["icons/**/*", "manifest.webmanifest"],
 });
 
 export default withSerwist(nextConfig);
