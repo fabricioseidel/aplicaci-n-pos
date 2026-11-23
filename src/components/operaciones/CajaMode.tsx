@@ -10,6 +10,7 @@ import { resumenTurno, type VentaTurno } from "@/lib/caja/resumenTurno";
 import type { CashShift } from "@/server/shifts.service";
 import { ArrowPathIcon } from "@heroicons/react/24/outline";
 import AbrirCaja from "./caja/AbrirCaja";
+import GastoRapido from "./caja/GastoRapido";
 import Movimientos, { MOVEMENT_METHOD_LABEL, type MovementMethod, type NuevoMovimiento } from "./caja/Movimientos";
 import VentasTurno, { type VentaDetalle } from "./caja/VentasTurno";
 import ComprasSinDueno from "./caja/ComprasSinDueno";
@@ -236,6 +237,8 @@ export default function CajaMode({
           </p>
         )}
       </div>
+
+      <GastoRapido onRegistrar={handleMovement} />
 
       <Movimientos onRegistrar={handleMovement} />
 

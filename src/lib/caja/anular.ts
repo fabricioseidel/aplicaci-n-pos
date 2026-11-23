@@ -4,15 +4,13 @@ import { pagosPorGrupo, type VentaTurno } from "./resumenTurno";
 /**
  * Reglas para anular una venta desde el POS.
  *
- * Decisión del dueño (por defecto, pendiente de confirmar): un ADMIN puede
- * anular cualquier venta; una vendedora sólo las del turno abierto y de los
- * últimos 30 minutos, que cubre los errores de mostrador (cobré con tarjeta y
- * era efectivo, se duplicó, me equivoqué en la cantidad). Una devolución en la
- * tarde la pide al admin. La misma función la usan la pantalla (para mostrar
- * el botón) y la ruta (que es la que manda: una pestaña vieja no la salta).
+ * Un ADMIN puede anular cualquier venta. Una vendedora puede anular cualquier
+ * venta del turno ABIERTO, sin límite de tiempo (antes eran 30 minutos y un
+ * error notado una hora después obligaba a pedírselo al admin). Una vez
+ * cerrado el turno, el arqueo ya se hizo con esa venta: ahí solo el admin.
+ * La misma función la usan la pantalla (para mostrar el botón) y la ruta (que
+ * es la que manda: una pestaña vieja no la salta).
  */
-export const MINUTOS_ANULAR_VENDEDORA = 30;
-
 export type PermisoAnular = { ok: true } | { ok: false; motivo: string };
 
 export function puedeAnular(input: {
@@ -30,14 +28,6 @@ export function puedeAnular(input: {
     return {
       ok: false,
       motivo: "Es de un turno ya cerrado. Sólo un administrador puede anularla.",
-    };
-  }
-  const ahora = (input.ahora ?? new Date()).getTime();
-  const minutos = (ahora - new Date(input.venta.ts).getTime()) / 60000;
-  if (!(minutos <= MINUTOS_ANULAR_VENDEDORA)) {
-    return {
-      ok: false,
-      motivo: `Pasaron más de ${MINUTOS_ANULAR_VENDEDORA} minutos. Pídele la anulación a un administrador.`,
     };
   }
   return { ok: true };

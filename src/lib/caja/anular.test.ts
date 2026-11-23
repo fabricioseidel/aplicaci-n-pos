@@ -11,18 +11,12 @@ describe("puedeAnular", () => {
     ).toEqual({ ok: true });
   });
 
-  it("vendedora: turno abierto y dentro de 30 min", () => {
-    expect(
-      puedeAnular({ rol: "SELLER", venta: { ts: hace(29), shift_id: "t1" }, turnoAbiertoId: "t1", ahora }).ok
-    ).toBe(true);
-    expect(
-      puedeAnular({ rol: "SELLER", venta: { ts: hace(30), shift_id: "t1" }, turnoAbiertoId: "t1", ahora }).ok
-    ).toBe(true);
-  });
-
-  it("vendedora: más de 30 min → no", () => {
-    const r = puedeAnular({ rol: "SELLER", venta: { ts: hace(31), shift_id: "t1" }, turnoAbiertoId: "t1", ahora });
-    expect(r.ok).toBe(false);
+  it("vendedora: cualquier venta del turno abierto, sin límite de tiempo", () => {
+    for (const minutos of [1, 29, 31, 180, 60 * 12]) {
+      expect(
+        puedeAnular({ rol: "SELLER", venta: { ts: hace(minutos), shift_id: "t1" }, turnoAbiertoId: "t1", ahora }).ok
+      ).toBe(true);
+    }
   });
 
   it("vendedora: venta de un turno cerrado o sin turno → no", () => {
@@ -43,9 +37,12 @@ describe("puedeAnular", () => {
     ).toBe(false);
   });
 
-  it("fecha ilegible → no (no se asume reciente)", () => {
+  it("la fecha ya no importa: manda el turno (una fecha ilegible del turno abierto igual se puede anular)", () => {
     expect(
       puedeAnular({ rol: "SELLER", venta: { ts: "basura", shift_id: "t1" }, turnoAbiertoId: "t1", ahora }).ok
+    ).toBe(true);
+    expect(
+      puedeAnular({ rol: "SELLER", venta: { ts: "basura", shift_id: "t0" }, turnoAbiertoId: "t1", ahora }).ok
     ).toBe(false);
   });
 });

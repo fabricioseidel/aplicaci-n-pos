@@ -4,7 +4,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useSession } from "next-auth/react";
 import {
   MagnifyingGlassIcon, XMarkIcon, PlusIcon, ScaleIcon, CameraIcon, ArchiveBoxIcon,
-  CheckCircleIcon, ListBulletIcon, ClockIcon, ArrowPathIcon,
+  CheckCircleIcon, ListBulletIcon, ClockIcon, ArrowPathIcon, ClipboardDocumentListIcon,
 } from "@heroicons/react/24/outline";
 import { useToast } from "@/contexts/ToastContext";
 import { useBranch } from "@/contexts/BranchContext";
@@ -21,6 +21,7 @@ import {
 import FichaProducto, { type ResultadoFicha } from "./productos/FichaProducto";
 import ListaPrecios from "./productos/ListaPrecios";
 import CambiosHoy from "./productos/CambiosHoy";
+import InventarioLista from "./productos/InventarioLista";
 import { useEscaneoProductos } from "./productos/useEscaneoProductos";
 import { fechaChile, fechaCorta } from "@/lib/products/oferta";
 
@@ -33,7 +34,8 @@ type Vista =
   | { tipo: "lista" }
   | { tipo: "ficha"; barcode?: string; nuevo?: { barcode?: string; name?: string }; clave: number }
   | { tipo: "listaPrecios" }
-  | { tipo: "cambios" };
+  | { tipo: "cambios" }
+  | { tipo: "inventario" };
 
 /**
  * Productos: buscar, escanear y editar.
@@ -188,6 +190,15 @@ export default function ProductosMode() {
   if (vista.tipo === "cambios") {
     return <CambiosHoy onVolver={() => setVista({ tipo: "lista" })} />;
   }
+  if (vista.tipo === "inventario") {
+    return (
+      <InventarioLista
+        productos={products}
+        sede={currentBranch?.name ?? "Sede"}
+        onVolver={() => setVista({ tipo: "lista" })}
+      />
+    );
+  }
 
   return (
     <div className="max-w-3xl mx-auto w-full">
@@ -240,18 +251,24 @@ export default function ProductosMode() {
           </button>
         </div>
 
-        <div className="grid grid-cols-2 gap-2">
+        <div className="grid grid-cols-3 gap-2">
+          <button
+            onClick={() => setVista({ tipo: "inventario" })}
+            className="h-11 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-[11px] font-black uppercase tracking-widest text-emerald-300 flex items-center justify-center gap-1.5"
+          >
+            <ClipboardDocumentListIcon className="w-5 h-5" /> Inventario
+          </button>
           <button
             onClick={() => setVista({ tipo: "listaPrecios" })}
-            className="h-11 rounded-xl bg-white/5 border border-white/10 text-xs font-black uppercase tracking-widest text-white/80 flex items-center justify-center gap-2"
+            className="h-11 rounded-xl bg-white/5 border border-white/10 text-[11px] font-black uppercase tracking-widest text-white/80 flex items-center justify-center gap-1.5"
           >
-            <ListBulletIcon className="w-5 h-5" /> Lista de precios
+            <ListBulletIcon className="w-5 h-5" /> Precios
           </button>
           <button
             onClick={() => setVista({ tipo: "cambios" })}
-            className="h-11 rounded-xl bg-white/5 border border-white/10 text-xs font-black uppercase tracking-widest text-white/80 flex items-center justify-center gap-2"
+            className="h-11 rounded-xl bg-white/5 border border-white/10 text-[11px] font-black uppercase tracking-widest text-white/80 flex items-center justify-center gap-1.5"
           >
-            <ClockIcon className="w-5 h-5" /> Cambiados hoy
+            <ClockIcon className="w-5 h-5" /> Cambios hoy
           </button>
         </div>
 

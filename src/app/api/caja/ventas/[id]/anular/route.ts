@@ -8,8 +8,8 @@ export const dynamic = "force-dynamic";
 /**
  * POST /api/caja/ventas/:id/anular — Body: { motivo, atendio? }
  *
- * La regla de quién puede (ADMIN siempre; vendedora sólo turno abierto y
- * últimos 30 min) se valida acá y no sólo en la pantalla: una pestaña con el
+ * La regla de quién puede (ADMIN siempre; vendedora cualquier venta del
+ * turno abierto) se valida acá y no sólo en la pantalla: una pestaña con el
  * código viejo no la puede saltar. Anular dos veces responde ok.
  *
  * `atendio` es quién está en el mostrador ("¿Quién atiende?"); queda en
