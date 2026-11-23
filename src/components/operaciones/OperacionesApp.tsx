@@ -24,6 +24,7 @@ import { useActualizacionApp } from "@/hooks/useActualizacionApp";
 import ConteoMode from "@/components/operaciones/ConteoMode";
 import ProductosMode from "@/components/operaciones/ProductosMode";
 import BranchSwitcher from "@/components/operaciones/BranchSwitcher";
+import AyudaGuia from "@/components/operaciones/AyudaGuia";
 
 type OperationsMode = "VENTA" | "RECEPCION" | "CONTEO" | "CAJA" | "PRODUCTOS";
 
@@ -134,6 +135,7 @@ export default function OperacionesApp() {
           </div>
           <BranchSwitcher />
           <SyncBadge />
+          <AyudaGuia pestana={mode} />
         </div>
         <div className="flex max-w-4xl mx-auto px-1 sm:px-2">
           {TABS.map(({ id, label, icon: Icon }) => (
