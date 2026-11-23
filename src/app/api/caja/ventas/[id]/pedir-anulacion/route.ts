@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
 /**
  * POST /api/caja/ventas/:id/pedir-anulacion — Body: { motivo, atendio? }
  *
- * Para cuando la vendedora ya no puede anular (más de 30 minutos o turno
+ * Para cuando la vendedora ya no puede anular (la venta es de un turno
  * cerrado): deja la venta marcada en sus notas y el admin la ve marcada en
  * "Ventas del turno". Pedirla dos veces no la marca dos veces.
  */

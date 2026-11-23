@@ -10,7 +10,6 @@ import {
   avisoDevolucion,
   resumenProductos,
   tienePedidoAnulacion,
-  MINUTOS_ANULAR_VENDEDORA,
   type PermisoAnular,
 } from "@/lib/caja/anular";
 import Hoja from "./Hoja";
@@ -422,8 +421,8 @@ function DetalleVenta({
             <div className="space-y-3">
               {motivoUI}
               <p className="text-xs text-white/45">
-                Una vendedora puede anular sólo ventas del turno abierto de los últimos{" "}
-                {MINUTOS_ANULAR_VENDEDORA} minutos. Esta queda marcada para el administrador.
+                Una vendedora puede anular las ventas del turno abierto. Esta es de un turno ya
+                cerrado: queda marcada para el administrador.
               </p>
               <button
                 type="button"
