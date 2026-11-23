@@ -1,7 +1,8 @@
 "use client";
 
 import React, { useMemo, useState } from "react";
-import { ArrowLeftIcon, MagnifyingGlassIcon, XMarkIcon } from "@heroicons/react/24/outline";
+import { ArrowLeftIcon, MagnifyingGlassIcon, PencilSquareIcon, XMarkIcon } from "@heroicons/react/24/outline";
+import AjustarStock from "./AjustarStock";
 import type { ProductUI } from "@/types";
 
 const num = (x: number) => Number(x).toLocaleString("es-CL", { maximumFractionDigits: 3 });
@@ -11,16 +12,28 @@ const sinTildes = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLo
  * Inventario de la sede, a la vista: solo el nombre del producto y su stock.
  * Para mirar qué hay sin entrar a la ficha de cada uno. El stock es el de la
  * sede elegida arriba (el catálogo ya viene por sede).
+ *
+ * Tocar una fila abre "Ajustar stock" para corregir un error: se escribe
+ * cuántas hay ahora y el motivo. El ajuste queda registrado como movimiento
+ * (no se pisa el número en silencio) y solo se aplica si el stock sigue siendo
+ * el que se veía, así no revierte una venta hecha en el medio.
  */
 export default function InventarioLista({
   productos,
   sede,
+  branchId = null,
+  onAjustado,
   onVolver,
 }: {
   productos: ProductUI[];
   sede: string;
+  branchId?: string | null;
+  /** Se ajustó el stock de un producto: `stock` es el valor que quedó. */
+  onAjustado?: (producto: ProductUI, stock: number) => void;
   onVolver: () => void;
 }) {
+  const [ajustando, setAjustando] = useState<ProductUI | null>(null);
+  const [aviso, setAviso] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [soloConStock, setSoloConStock] = useState(true);
 
@@ -89,6 +102,15 @@ export default function InventarioLista({
         </div>
       </div>
 
+      {aviso && (
+        <p
+          role="status"
+          className="mx-3 mt-3 rounded-xl bg-emerald-500/15 border border-emerald-500/40 px-3 py-2 text-sm font-black text-emerald-100"
+        >
+          {aviso}
+        </p>
+      )}
+
       <ul className="p-3 space-y-1.5">
         {filas.length === 0 && (
           <li className="py-12 text-center text-xs font-black uppercase tracking-widest text-white/30">
@@ -98,23 +120,46 @@ export default function InventarioLista({
         {filas.map((p) => {
           const stock = Number(p.stock ?? 0);
           return (
-            <li
-              key={p.id}
-              className="flex items-center justify-between gap-3 bg-white/5 border border-white/5 rounded-xl px-3 min-h-12 py-2"
-            >
-              <span className="min-w-0 truncate text-sm font-bold text-white">{p.name}</span>
-              <span
-                className={`shrink-0 text-base font-black tabular-nums ${
-                  stock <= 0 ? "text-red-400" : "text-emerald-400"
-                }`}
+            <li key={p.id}>
+              <button
+                type="button"
+                onClick={() => setAjustando(p)}
+                aria-label={`Corregir stock de ${p.name}`}
+                className="w-full flex items-center justify-between gap-3 bg-white/5 active:bg-white/10 border border-white/5 rounded-xl px-3 min-h-12 py-2 text-left"
               >
-                {num(stock)}
-                {p.byWeight ? " kg" : ""}
-              </span>
+                <span className="min-w-0 truncate text-sm font-bold text-white">{p.name}</span>
+                <span className="shrink-0 flex items-center gap-2">
+                  <span
+                    className={`text-base font-black tabular-nums ${
+                      stock <= 0 ? "text-red-400" : "text-emerald-400"
+                    }`}
+                  >
+                    {num(stock)}
+                    {p.byWeight ? " kg" : ""}
+                  </span>
+                  <PencilSquareIcon className="w-4 h-4 text-white/30" />
+                </span>
+              </button>
             </li>
           );
         })}
       </ul>
+
+      {ajustando && (
+        <AjustarStock
+          barcode={ajustando.barcode || ajustando.id}
+          nombre={ajustando.name}
+          porPeso={Boolean(ajustando.byWeight)}
+          stockVisto={Number(ajustando.stock ?? 0)}
+          branchId={branchId}
+          onCancel={() => setAjustando(null)}
+          onDone={(stock) => {
+            onAjustado?.(ajustando, stock);
+            setAviso(`✓ ${ajustando.name}: ahora ${num(stock)}${ajustando.byWeight ? " kg" : ""}`);
+            setAjustando(null);
+          }}
+        />
+      )}
     </div>
   );
 }
